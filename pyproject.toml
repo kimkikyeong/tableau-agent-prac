@@ -1,0 +1,12 @@
+[project]
+name = "01-tableau-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.112.0",
+    "httpx>=0.28.1",
+    "mcp>=1.28.0",
+    "python-dotenv>=1.2.2",
+]

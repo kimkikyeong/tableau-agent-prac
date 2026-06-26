@@ -18,6 +18,12 @@ build/
 .env.*
 !.env.example
 
+# MCP 설정 (PAT 시크릿 포함 — 커밋 금지)
+.claude/mcp.json
+
+# 런타임 생성 파일
+src/app_log.json
+
 # IDE
 .vscode/
 .idea/
@@ -28,5 +34,5 @@ build/
 .DS_Store
 Thumbs.db
 
-# uv
-uv.lock
+# uv (lock 파일은 재현 가능한 빌드를 위해 커밋 대상)
+# uv.lock — do NOT ignore

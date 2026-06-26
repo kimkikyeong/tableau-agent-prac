@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tableau MCP Agent — Dev Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Menlo', 'Monaco', 'Consolas', monospace; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #030712; }
+    ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
+    .step-card { transition: border-color 0.12s, background 0.12s; cursor: pointer; }
+    .step-card:hover { border-color: #374151 !important; }
+    .step-card.active { border-color: #3b82f6 !important; background: rgba(59,130,246,0.07); }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-300 h-screen flex flex-col text-xs overflow-hidden">
+
+  <!-- ══════════════════════ HEADER ══════════════════════ -->
+  <header class="flex-none border-b border-gray-800/70 px-5 py-2.5 flex items-center justify-between bg-gray-950">
+    <div class="flex items-center gap-3">
+      <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+      <span class="text-white font-bold tracking-widest text-sm">TABLEAU MCP AGENT</span>
+      <span class="text-gray-600 text-[10px]">Dev Monitor · v0.1</span>
+    </div>
+    <div class="text-gray-600 text-[10px]" id="last-updated">—</div>
+  </header>
+
+  <!-- ══════════════════════ INFRA HEALTH ══════════════════════ -->
+  <section class="flex-none border-b border-gray-800/70 px-5 py-2 bg-gray-950/60">
+    <div class="flex items-center gap-2.5 flex-wrap" id="infra-badges">
+      <!-- JS render -->
+    </div>
+    <div class="text-gray-700 text-[10px] mt-1.5">
+      헬스 체크 실행:
+      <code class="text-gray-600 bg-gray-900 px-1.5 py-0.5 rounded">uv run python src/health_check.py --watch</code>
+      후 로컬 서버
+      <code class="text-gray-600 bg-gray-900 px-1.5 py-0.5 rounded">python -m http.server 8000</code>
+      기동 시 실시간 갱신
+    </div>
+  </section>
+
+  <!-- ══════════════════════ MAIN LAYOUT ══════════════════════ -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- LEFT: Step Menu -->
+    <aside class="w-64 flex-none border-r border-gray-800/70 overflow-y-auto p-3 flex flex-col gap-1.5">
+      <div class="text-[10px] text-gray-600 uppercase tracking-widest px-1 mb-1">Workflow Steps</div>
+      <div id="step-menu" class="flex flex-col gap-1.5"></div>
+    </aside>
+
+    <!-- RIGHT: Detail Panel -->
+    <main class="flex-1 overflow-y-auto p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div id="panel-title" class="text-white font-semibold text-sm"></div>
+        <div id="panel-status-badge"></div>
+      </div>
+      <div id="panel-content"></div>
+    </main>
+
+  </div><!-- /main layout -->
+
+  <script>
+  // ════════════════════════════════════════════════════════════════
+  //  MOCK DATA
+  //  백엔드 Python이 src/app_log.json 을 이 구조로 갱신한다.
+  //  fetch 실패(file:// 등) 시 이 데이터가 폴백으로 사용된다.
+  // ════════════════════════════════════════════════════════════════
+  const MOCK = {
+    updated_at: new Date().toISOString(),
+    infrastructure: {
+      official_mcp: { label: 'Official Tableau MCP', status: 'connected',    latency_ms: 43 },
+      ta_mcp:       { label: 'ta_mcp (Custom VDS)',   status: 'connected',    latency_ms: 17 },
+      vds_api:      { label: 'Tableau VDS API',       status: 'warning',      latency_ms: 318 },
+      vector_db:    { label: 'Guideline Vector DB',   status: 'disconnected', latency_ms: null },
+    },
+    steps: {
+      step01: {
+        status: 'done',
+        last_run: '2025-06-26T08:00:00',
+        fields_profiled: 87,
+        glossary_count: 24,
+        fields: [
+          { name: 'Sales',       type: 'DECIMAL',  domain: '영업·매출', min: 0,    max: 9800000000, synonyms: ['매출', '수익', 'Revenue'] },
+          { name: 'Region',      type: 'STRING',   domain: '지역',      min: '—',  max: '—',        synonyms: ['지역', '권역', '구역'] },
+          { name: 'Quarter',     type: 'STRING',   domain: '시간',      min: '—',  max: '—',        synonyms: ['분기', 'QTR', 'Q'] },
+          { name: 'OccupyRate',  type: 'PERCENT',  domain: '의료·운영', min: 0,    max: 100,        synonyms: ['가동률', '병상점유율'] },
+          { name: 'OutPatient',  type: 'INTEGER',  domain: '의료·운영', min: 0,    max: 5000,       synonyms: ['외래', '외래환자수'] },
+        ],
+      },
+      step02: {
+        status: 'active',
+        last_query: '2025년 3분기 지역별 매출 합계 알려줘',
+        routed_to: 'ta_mcp',
+        routing_reason: '수치 집계 의도 감지 → ta_mcp (VDS 데이터 레이어) 선택',
+        latency_ms: 220,
+        tools_called: ['list_vds_sources', 'query_vds_data'],
+      },
+      step03: {
+        status: 'done',
+        recipe_id: 'RCP-20250626-001',
+        is_cached: false,
+        pre_hook_results: [
+          { field: 'source_id', value: 'ds-sales-001', pass: true,  note: '소스 존재 확인' },
+          { field: 'fields',    value: '["Sales","Region"]', pass: true,  note: '필수값 비어있지 않음' },
+          { field: 'filters',   value: '[{"field":"Quarter","value":"Q3-2025"}]', pass: true, note: '필터 구조 정상' },
+        ],
+        recipe: {
+          source_id: 'ds-sales-001',
+          fields: ['Sales', 'Region'],
+          filters: [{ field: 'Quarter', value: 'Q3-2025' }],
+          created_at: '2025-06-26T09:10:05',
+        },
+      },
+      step04: {
+        status: 'running',
+        iteration: 2,
+        max_iteration: 3,
+        threshold_pct: 1.0,
+        vds_raw: {
+          status: 'ok',
+          elapsed_ms: 142,
+          rows: 4,
+          data: [
+            { Region: '수도권',    Sales: 1850000000 },
+            { Region: '부산/경남', Sales: 720000000 },
+            { Region: '대구/경북', Sales: 430000000 },
+            { Region: '기타',      Sales: 210000000 },
+          ],
+        },
+        dashboard_values: {
+          view_id: 'vw-sales-regional-q3',
+          scraped_at: '2025-06-26T09:12:00',
+          data: [
+            { Region: '수도권',    Sales: 1852350000 },
+            { Region: '부산/경남', Sales: 719800000 },
+            { Region: '대구/경북', Sales: 432100000 },
+            { Region: '기타',      Sales: 211500000 },
+          ],
+        },
+      },
+      step05: {
+        status: 'pending',
+        sub_agents: [
+          { name: '수익 지표 에이전트',   metric: 'Revenue KPI',  status: 'pending', report: null },
+          { name: '병상 가동률 에이전트', metric: 'Occupy Rate',  status: 'pending', report: null },
+          { name: '외래 현황 에이전트',   metric: 'OutPatient',   status: 'pending', report: null },
+        ],
+        briefing_agent: { status: 'pending', template: 'morning_brief.j2', output_format: 'md' },
+      },
+    },
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  //  STATE
+  // ════════════════════════════════════════════════════════════════
+  const state = { activeStep: 1, data: MOCK };
+
+  // ════════════════════════════════════════════════════════════════
+  //  CONSTANTS
+  // ════════════════════════════════════════════════════════════════
+  const DOT = {
+    connected:      '<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 flex-none"></span>',
+    warning:        '<span class="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 mr-1.5 flex-none"></span>',
+    disconnected:   '<span class="inline-block w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5 flex-none opacity-60"></span>',
+    not_configured: '<span class="inline-block w-1.5 h-1.5 rounded-full bg-gray-700 mr-1.5 flex-none"></span>',
+    done:           '<span class="text-emerald-400">●</span>',
+    active:         '<span class="text-blue-400 animate-pulse">●</span>',
+    running:        '<span class="text-blue-400 animate-pulse">●</span>',
+    pending:        '<span class="text-gray-700">○</span>',
+    error:          '<span class="text-red-400">●</span>',
+  };
+
+  const LABEL = {
+    connected: 'CONNECTED', warning: 'DEGRADED', disconnected: 'OFFLINE',
+    not_configured: 'NOT CONFIGURED',
+    done: 'DONE', active: 'ACTIVE', running: 'RUNNING', pending: 'PENDING', error: 'ERROR',
+  };
+
+  const CLR = {
+    connected: 'text-emerald-400', warning: 'text-yellow-400', disconnected: 'text-red-500',
+    not_configured: 'text-gray-600',
+    done: 'text-emerald-400', active: 'text-blue-400', running: 'text-blue-400',
+    pending: 'text-gray-600', error: 'text-red-400',
+  };
+
+  const STEPS = [
+    { n:1, key:'step01', tag:'STEP 01', title:'메타데이터 자동 프로파일링 & 글로서리 빌드', sub:'가이드라인 레이어 구축' },
+    { n:2, key:'step02', tag:'STEP 02', title:'유저 자연어 입력 및 이중 MCP 서버 라우팅',  sub:'의도 파악 및 디스패치' },
+    { n:3, key:'step03', tag:'STEP 03', title:'Pre-hook 가드레일 & 레시피 자동 생성',      sub:'추출 조건 검증 및 저장' },
+    { n:4, key:'step04', tag:'STEP 04', title:'VDS API 통신 및 N차 데이터 검증 루프',      sub:'Agent 결과 vs 대시보드 비교·보정' },
+    { n:5, key:'step05', tag:'STEP 05', title:'지표별 다중 에이전트 조합 및 리포트 발행',  sub:'Jinja2 기반 모닝 브리핑' },
+  ];
+
+  // ════════════════════════════════════════════════════════════════
+  //  UI HELPERS
+  // ════════════════════════════════════════════════════════════════
+  const fmt  = n => (typeof n === 'number') ? n.toLocaleString('ko-KR') : String(n);
+  const sec  = t => `<div class="text-[10px] text-gray-600 uppercase tracking-widest mb-2">${t}</div>`;
+  const card = c => `<div class="bg-gray-900 border border-gray-800 rounded p-4 mb-4">${c}</div>`;
+
+  function statBox(label, value, cls = 'text-white') {
+    return `<div class="bg-gray-800/70 rounded px-3 py-2">
+      <div class="text-gray-600 text-[10px] mb-0.5">${label}</div>
+      <div class="${cls} font-bold text-sm leading-tight">${value}</div>
+    </div>`;
+  }
+
+  function tbl(headers, rows, colCls = []) {
+    const ths = headers.map(h =>
+      `<th class="text-left text-[10px] text-gray-600 uppercase tracking-wider pb-2 pr-5 font-medium whitespace-nowrap">${h}</th>`
+    ).join('');
+    const trs = rows.map(r =>
+      `<tr class="border-t border-gray-800/60">${r.map((cell, i) =>
+        `<td class="py-2 pr-5 align-top ${colCls[i] || 'text-gray-300'}">${cell}</td>`
+      ).join('')}</tr>`
+    ).join('');
+    return `<div class="overflow-x-auto"><table class="w-full border-collapse"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table></div>`;
+  }
+
+  function moe(a, b) {
+    const diff = a - b;
+    const pct  = b !== 0 ? Math.abs(diff / b * 100) : 0;
+    return { diff, pct };
+  }
+
+  function moeTag(pct, thr) {
+    if (pct <= thr * 0.5) return { icon: '✅', cls: 'text-emerald-400', lbl: 'PASS' };
+    if (pct <= thr)       return { icon: '⚠️', cls: 'text-yellow-400',  lbl: 'WARN' };
+    return                       { icon: '❌', cls: 'text-red-400',     lbl: 'FAIL' };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  RENDER: INFRA BADGES
+  // ════════════════════════════════════════════════════════════════
+  function renderInfra(infra) {
+    document.getElementById('infra-badges').innerHTML =
+      Object.values(infra).map(item => {
+        const dot   = DOT[item.status]   || DOT.disconnected;
+        const label = LABEL[item.status] || item.status.toUpperCase();
+        const clr   = CLR[item.status]   || CLR.disconnected;
+        const ms    = item.latency_ms != null ? `<span class="text-gray-700 ml-1">${item.latency_ms}ms</span>` : '';
+        // 부가 정보: 에러 | 노트 | 등록 툴 수
+        let extra = '';
+        if (item.error) {
+          const short = item.error.length > 45 ? item.error.slice(0, 45) + '…' : item.error;
+          extra = `<span class="text-red-500/60 ml-2" title="${item.error}">[!] ${short}</span>`;
+        } else if (item.note) {
+          extra = `<span class="text-gray-700 ml-2">${item.note}</span>`;
+        } else if (item.tools) {
+          extra = `<span class="text-gray-700 ml-2">${item.tools.length} tools</span>`;
+        } else if (item.sources_count != null) {
+          extra = `<span class="text-gray-700 ml-2">${item.sources_count} sources</span>`;
+        }
+        return `
+        <div class="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded px-3 py-1.5 min-w-0">
+          ${dot}
+          <span class="text-gray-400 whitespace-nowrap">${item.label}</span>
+          <span class="ml-1.5 font-bold ${clr} whitespace-nowrap">${label}</span>
+          ${ms}${extra}
+        </div>`;
+      }).join('');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  RENDER: LEFT STEP MENU
+  // ════════════════════════════════════════════════════════════════
+  function renderStepMenu() {
+    document.getElementById('step-menu').innerHTML = STEPS.map(m => {
+      const s = state.data.steps[m.key];
+      const isActive = state.activeStep === m.n;
+      return `
+        <div class="step-card border border-gray-800 rounded p-3 ${isActive ? 'active' : ''}"
+             onclick="switchStep(${m.n})">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] text-gray-600 font-bold tracking-widest">${m.tag}</span>
+            <span class="${CLR[s.status]} text-[10px] font-semibold">${LABEL[s.status]}</span>
+          </div>
+          <div class="text-gray-300 leading-snug">${m.title}</div>
+          <div class="text-gray-600 mt-0.5">${m.sub}</div>
+        </div>`;
+    }).join('');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  RENDER: PANEL HEADER
+  // ════════════════════════════════════════════════════════════════
+  function setPanelHeader(m, s) {
+    document.getElementById('panel-title').textContent = `${m.tag} — ${m.title}`;
+    document.getElementById('panel-status-badge').innerHTML =
+      `<span class="border rounded px-2 py-0.5 text-[10px] font-bold ${CLR[s.status]} border-current">
+        ${LABEL[s.status]}
+      </span>`;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP 01 — 메타데이터 프로파일링 & 글로서리
+  // ════════════════════════════════════════════════════════════════
+  function renderStep01(s) {
+    const rows = s.fields.map(f => [
+      `<span class="font-mono text-blue-300">${f.name}</span>`,
+      `<span class="text-gray-500">${f.type}</span>`,
+      f.domain,
+      String(f.min),
+      String(f.max),
+      `<span class="text-emerald-400/80">${f.synonyms.join(', ')}</span>`,
+    ]);
+    document.getElementById('panel-content').innerHTML =
+      card(`${sec('프로파일링 요약')}
+        <div class="grid grid-cols-4 gap-3">
+          ${statBox('필드 프로파일링', s.fields_profiled + ' 개')}
+          ${statBox('글로서리 항목', s.glossary_count + ' 개', 'text-emerald-400')}
+          ${statBox('상태', LABEL[s.status], CLR[s.status])}
+          ${statBox('마지막 실행', new Date(s.last_run).toLocaleString('ko-KR'), 'text-gray-300')}
+        </div>`) +
+      card(`${sec('필드 도메인 & 글로서리 (샘플)')}
+        ${tbl(['Field','Type','Domain','Min','Max','Synonyms (글로서리)'], rows)}`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP 02 — 이중 MCP 라우팅
+  // ════════════════════════════════════════════════════════════════
+  function renderStep02(s) {
+    document.getElementById('panel-content').innerHTML =
+      card(`${sec('마지막 유저 입력')}
+        <div class="bg-gray-800/60 border border-gray-700 rounded p-3 text-gray-200 mb-4">"${s.last_query}"</div>
+        <div class="grid grid-cols-3 gap-3">
+          ${statBox('라우팅 결정 서버', s.routed_to, 'text-blue-400')}
+          ${statBox('LLM 추론 지연', s.latency_ms + 'ms')}
+          ${statBox('상태', LABEL[s.status], CLR[s.status])}
+        </div>`) +
+      card(`${sec('라우팅 판단 근거')}
+        <div class="text-gray-400 mb-4 leading-relaxed">${s.routing_reason}</div>
+        ${sec('호출 툴 시퀀스')}
+        <div class="flex items-center gap-2 flex-wrap">
+          ${s.tools_called.map((t, i) =>
+            (i > 0 ? '<span class="text-gray-700 text-base">→</span>' : '') +
+            `<span class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-blue-300 font-mono">${t}()</span>`
+          ).join('')}
+        </div>`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP 03 — Pre-hook 가드레일 & 레시피
+  // ════════════════════════════════════════════════════════════════
+  function renderStep03(s) {
+    const hookRows = s.pre_hook_results.map(r => [
+      `<span class="font-mono text-blue-300">${r.field}</span>`,
+      `<span class="font-mono text-gray-400 break-all">${r.value}</span>`,
+      r.pass ? '<span class="text-emerald-400">✅ PASS</span>' : '<span class="text-red-400">❌ FAIL</span>',
+      `<span class="text-gray-500">${r.note}</span>`,
+    ]);
+    document.getElementById('panel-content').innerHTML =
+      card(`${sec('Pre-hook 가드레일 결과')}
+        ${tbl(['인자','값','결과','비고'], hookRows)}`) +
+      card(`${sec('생성된 레시피 (추출 조건 저장본)')}
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-gray-500">Recipe ID</span>
+          <span class="font-mono text-yellow-300 font-bold">${s.recipe_id}</span>
+          <span class="border rounded px-2 py-0.5 text-[10px] font-bold
+            ${s.is_cached ? 'text-yellow-400 border-yellow-400/40' : 'text-emerald-400 border-emerald-400/40'}">
+            ${s.is_cached ? 'CACHED' : 'NEW'}
+          </span>
+          <span class="text-gray-600">${new Date(s.recipe.created_at).toLocaleString('ko-KR')}</span>
+        </div>
+        <pre class="bg-gray-950 border border-gray-800 rounded p-3 text-emerald-300 text-[11px]">${
+          JSON.stringify(s.recipe, null, 2)
+        }</pre>`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP 04 — VDS vs Dashboard 비교 (N차 보정 루프)
+  // ════════════════════════════════════════════════════════════════
+  function renderStep04(s) {
+    const thr    = s.threshold_pct;
+    const vdsMap = Object.fromEntries(s.vds_raw.data.map(r => [r.Region, r.Sales]));
+    const dbMap  = Object.fromEntries(s.dashboard_values.data.map(r => [r.Region, r.Sales]));
+    const regions = [...new Set([...Object.keys(vdsMap), ...Object.keys(dbMap)])];
+
+    const allPct = regions.map(r => moe(vdsMap[r] ?? 0, dbMap[r] ?? 0).pct);
+    const maxMoe  = Math.max(...allPct);
+    const overallOk = maxMoe <= thr;
+
+    const compRows = regions.map(r => {
+      const vv = vdsMap[r] ?? 0;
+      const dv = dbMap[r]  ?? 0;
+      const { diff, pct } = moe(vv, dv);
+      const tag = moeTag(pct, thr);
+      return [
+        r,
+        fmt(vv),
+        fmt(dv),
+        `<span class="${diff >= 0 ? 'text-sky-300' : 'text-orange-300'}">${diff >= 0 ? '+' : ''}${fmt(diff)}</span>`,
+        `<span class="${tag.cls}">${pct.toFixed(3)}%</span>`,
+        `<span class="${tag.cls} font-bold">${tag.icon} ${tag.lbl}</span>`,
+      ];
+    });
+
+    // 루프 진행 바 (완료:파란, 마지막+통과:초록, 미완:어두움)
+    const barCells = Array.from({ length: s.max_iteration }, (_, i) => {
+      let bg = 'bg-gray-800';
+      if (i < s.iteration - 1) bg = 'bg-blue-600';
+      else if (i === s.iteration - 1) bg = overallOk ? 'bg-emerald-500' : 'bg-blue-500';
+      return `<div class="h-1.5 flex-1 rounded-full ${bg}"></div>`;
+    }).join('');
+
+    document.getElementById('panel-content').innerHTML =
+
+      // ─── 보정 루프 현황 ───
+      card(`${sec('N차 보정 루프 현황')}
+        <div class="grid grid-cols-4 gap-3 mb-3">
+          ${statBox('반복 (Iteration)', `${s.iteration} / ${s.max_iteration}`)}
+          ${statBox('오차 허용 임계값', `±${thr}%`, 'text-gray-300')}
+          ${statBox('이번 회차 최대 MoE', `${maxMoe.toFixed(3)}%`, maxMoe <= thr ? 'text-emerald-400' : 'text-red-400')}
+          ${statBox('정합성 판정', overallOk ? '✅ PASS' : '❌ CORRECTION NEEDED', overallOk ? 'text-emerald-400' : 'text-red-400')}
+        </div>
+        <div class="text-[10px] text-gray-600 mb-1">보정 진행</div>
+        <div class="flex gap-1.5">${barCells}</div>`) +
+
+      // ─── Side-by-Side JSON ───
+      `<div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="bg-gray-900 border border-gray-800 rounded p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] text-gray-600 uppercase tracking-widest">VDS API Raw Response</span>
+            <span class="text-gray-700">${s.vds_raw.elapsed_ms}ms · ${s.vds_raw.rows} rows</span>
+          </div>
+          <pre class="bg-gray-950 border border-gray-800 rounded p-3 text-sky-200 text-[11px] max-h-56 overflow-y-auto">${
+            JSON.stringify(s.vds_raw, null, 2)
+          }</pre>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] text-gray-600 uppercase tracking-widest">Tableau Dashboard View (Scraped)</span>
+            <span class="text-gray-700">${s.dashboard_values.view_id}</span>
+          </div>
+          <pre class="bg-gray-950 border border-gray-800 rounded p-3 text-emerald-200 text-[11px] max-h-56 overflow-y-auto">${
+            JSON.stringify(s.dashboard_values, null, 2)
+          }</pre>
+        </div>
+      </div>` +
+
+      // ─── 정합성 비교 테이블 ───
+      card(`${sec(`정합성 비교 테이블 · 기준 필드: Sales · 임계값 ±${thr}%`)}
+        ${tbl(
+          ['Region', 'VDS 값', 'Dashboard 값', 'Δ 차이', 'MoE %', '판정'],
+          compRows,
+          ['text-gray-300', 'text-sky-300 font-mono', 'text-emerald-300 font-mono', '', '', '']
+        )}`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP 05 — 멀티 서브 에이전트 & 모닝 브리핑
+  // ════════════════════════════════════════════════════════════════
+  function renderStep05(s) {
+    const agentRows = s.sub_agents.map(a => [
+      a.name,
+      `<span class="text-gray-500 font-mono">${a.metric}</span>`,
+      `<span class="${CLR[a.status]}">${DOT[a.status]} ${LABEL[a.status]}</span>`,
+      a.report
+        ? `<a href="${a.report}" class="text-blue-400 underline hover:text-blue-300">${a.report}</a>`
+        : '<span class="text-gray-700">—</span>',
+    ]);
+    document.getElementById('panel-content').innerHTML =
+      card(`${sec('서브 에이전트 현황')}
+        ${tbl(['에이전트','Metric','상태','단위 리포트 (.md)'], agentRows)}`) +
+      card(`${sec('모닝 브리핑 에이전트 (오케스트레이터)')}
+        <div class="grid grid-cols-3 gap-3 mb-3">
+          ${statBox('상태', LABEL[s.briefing_agent.status], CLR[s.briefing_agent.status])}
+          ${statBox('Jinja2 템플릿', s.briefing_agent.template, 'text-yellow-300')}
+          ${statBox('출력 포맷', s.briefing_agent.output_format.toUpperCase())}
+        </div>
+        <div class="text-gray-700">※ 모든 서브 에이전트 단위 리포트 수집 완료 후 브리핑 에이전트 자동 기동</div>`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  STEP SWITCH
+  // ════════════════════════════════════════════════════════════════
+  function switchStep(n) {
+    state.activeStep = n;
+    renderStepMenu();
+    renderPanel();
+  }
+
+  function renderPanel() {
+    const m = STEPS.find(x => x.n === state.activeStep);
+    const s = state.data.steps[m.key];
+    setPanelHeader(m, s);
+    ({ 1: renderStep01, 2: renderStep02, 3: renderStep03,
+       4: renderStep04, 5: renderStep05 })[state.activeStep](s);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  FETCH LOOP
+  //
+  //  백엔드 Python 연동 방법:
+  //    1. src/app_log.json 을 위 MOCK 구조와 동일하게 갱신한다.
+  //    2. 로컬 서버 기동: python -m http.server 8000 (src/ 폴더 기준)
+  //       → http://localhost:8000/monitor.html 로 접근
+  //
+  //  file:// 직접 오픈 시: fetch가 CORS로 차단됨 → MOCK 데이터 자동 폴백
+  // ════════════════════════════════════════════════════════════════
+  async function fetchAppLog() {
+    try {
+      const res = await fetch('./app_log.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const fetched = await res.json();
+      // 인프라 상태는 health_check.py 실시간 값으로 갱신
+      if (fetched.infrastructure) state.data.infrastructure = fetched.infrastructure;
+      // steps는 에이전트 실행 후 기록된 경우에만 갱신 (없으면 MOCK 유지)
+      if (fetched.steps) state.data.steps = fetched.steps;
+    } catch {
+      // fetch 실패(file:// 또는 서버 미기동) 시 현재 state 유지
+    }
+    renderAll();
+    document.getElementById('last-updated').textContent =
+      `Updated: ${new Date().toLocaleTimeString('ko-KR')} · 5s interval`;
+  }
+
+  function renderAll() {
+    renderInfra(state.data.infrastructure);
+    renderStepMenu();
+    renderPanel();
+  }
+
+  fetchAppLog();
+  setInterval(fetchAppLog, 5000);
+  </script>
+</body>
+</html>
