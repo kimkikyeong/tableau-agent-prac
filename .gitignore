@@ -18,11 +18,14 @@ build/
 .env.*
 !.env.example
 
-# MCP 설정 (PAT 시크릿 포함 — 커밋 금지)
+# Claude Code 로컬 설정 (PAT 시크릿 포함 — 커밋 금지)
 .claude/mcp.json
+.claude/settings.local.json
 
 # 런타임 생성 파일
 src/app_log.json
+src/metadata.db
+src/vector_store/
 
 # IDE
 .vscode/

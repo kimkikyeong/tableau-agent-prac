@@ -1,6 +1,10 @@
 """
-ta_mcp: Tableau 커스텀 MCP 서버.
-VDS 데이터 쿼리 및 가드레일 로직을 LLM이 호출 가능한 MCP Tool로 제공한다.
+ta_mcp: Tableau 커스텀 MCP 서버 — VDS 쿼리 실행 전담.
+
+역할 분리 원칙:
+  - LUID 조회·필드 스키마 탐색: 공식 Tableau MCP (list-datasources, get-datasource-metadata)
+  - 실제 데이터 쿼리 실행:      ta_mcp (query_vds_data) ← 이 서버의 유일한 책임
+
 독립 프로세스로 실행: uv run python src/tableau_mcp.py
 """
 
@@ -19,58 +23,71 @@ from config import TableauVDSConnector
 server = FastMCP("ta_mcp")
 
 
-# ---------------------------------------------------------------------------
-# 가드레일 헬퍼
-# ---------------------------------------------------------------------------
-
 def _require(value: Any, name: str) -> None:
     if not value:
         raise ValueError(f"필수 인자 누락: '{name}'")
-
-
-# ---------------------------------------------------------------------------
-# MCP Tools
-# ---------------------------------------------------------------------------
-
-@server.tool()
-async def list_vds_sources() -> str:
-    """
-    사용 가능한 VDS 데이터 소스 목록과 메타데이터를 반환한다.
-    실제 데이터 지표 조회 전 반드시 먼저 호출하여 source_id를 확인해야 한다.
-    대시보드 구조나 서버 메타데이터가 아닌, 데이터 원본 자체의 목록을 반환한다.
-    """
-    async with TableauVDSConnector() as conn:
-        sources = await conn.get_datasource_metadata()
-    return json.dumps(sources, ensure_ascii=False)
 
 
 @server.tool()
 async def query_vds_data(
     source_id: str,
     fields: list[str],
+    aggregations: dict[str, str] | None = None,
     filters: list[dict] | None = None,
 ) -> str:
     """
-    선택된 VDS 소스에 쿼리를 실행하고 결과를 반환한다.
-    수치 분석, 지표 요약, 집계 등 실제 데이터 조회 시 사용한다.
+    VDS(VizQL Data Service)를 통해 게시된 데이터 소스에서 실제 데이터를 조회한다.
+    매출·수량·이익 등 수치 집계·분석이 필요한 질문에 사용한다.
+
+    호출 전 필수 선행 작업 (공식 Tableau MCP 사용):
+      1. list-datasources → source_id(LUID) 확인
+      2. get-datasource-metadata → 사용 가능한 fieldCaption 목록 확인
 
     Args:
-        source_id: list_vds_sources()로 획득한 데이터 소스 ID
-        fields: 조회할 필드명 목록 (예: ["Sales", "Region", "Profit"])
-        filters: 선택적 필터 조건 목록 (예: [{"field": "Region", "value": "East"}])
+        source_id: 공식 MCP list-datasources로 획득한 데이터 소스 LUID
+        fields: 공식 MCP get-datasource-metadata에서 확인한 fieldCaption 목록
+                (예: ["Category", "Sales", "Profit"])
+        aggregations: MEASURE 필드에 적용할 집계 함수
+                      (예: {"Sales": "SUM", "Profit": "AVG"})
+                      지원값: SUM, AVG, COUNT, COUNTD, MIN, MAX, MEDIAN
+        filters: 필터 조건 목록.
+                 단일 값: [{"field": "Region", "value": "East"}]
+                 복수 값: [{"field": "Category", "values": ["Technology", "Furniture"]}]
+                 제외 필터: [{"field": "Segment", "values": ["Home Office"], "exclude": true}]
     """
-    # [가드레일 - 사전 검증]
     _require(source_id, "source_id")
     _require(fields, "fields")
 
-    payload: dict[str, Any] = {"fields": fields}
+    # fields: list[str] → VDS fields 객체 배열
+    vds_fields: list[dict[str, Any]] = []
+    for f in fields:
+        field_obj: dict[str, Any] = {"fieldCaption": f}
+        if aggregations and f in aggregations:
+            field_obj["function"] = aggregations[f]
+        vds_fields.append(field_obj)
+
+    query_payload: dict[str, Any] = {"fields": vds_fields}
+
+    # filters: 간단한 dict → VDS SET 필터 형식 변환
     if filters:
-        payload["filters"] = filters
+        vds_filters: list[dict[str, Any]] = []
+        for f in filters:
+            field_caption = f.get("field")
+            if not field_caption:
+                continue
+            values = f.get("values") or ([f["value"]] if "value" in f else [])
+            vds_filters.append({
+                "filterType": "SET",
+                "field": {"fieldCaption": field_caption},
+                "values": [str(v) for v in values],
+                "exclude": f.get("exclude", False),
+            })
+        if vds_filters:
+            query_payload["filters"] = vds_filters
 
     async with TableauVDSConnector() as conn:
-        result = await conn.query(source_id, payload)
+        result = await conn.query(source_id, query_payload)
 
-    # [가드레일 - 사후 검증]
     if "data" not in result:
         raise RuntimeError(f"VDS 응답에 'data' 키가 없습니다. 원본 응답: {result}")
 

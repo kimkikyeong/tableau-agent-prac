@@ -25,7 +25,13 @@
       <span class="text-white font-bold tracking-widest text-sm">TABLEAU MCP AGENT</span>
       <span class="text-gray-600 text-[10px]">Dev Monitor · v0.1</span>
     </div>
-    <div class="text-gray-600 text-[10px]" id="last-updated">—</div>
+    <div class="flex items-center gap-3">
+      <div class="text-gray-600 text-[10px]" id="last-updated">—</div>
+      <button onclick="fetchAppLog()"
+              class="text-[10px] border border-gray-700 hover:border-gray-500 text-gray-500 hover:text-gray-300 rounded px-2 py-0.5 transition-colors">
+        새로고침
+      </button>
+    </div>
   </header>
 
   <!-- ══════════════════════ INFRA HEALTH ══════════════════════ -->
@@ -81,13 +87,63 @@
         status: 'done',
         last_run: '2025-06-26T08:00:00',
         fields_profiled: 87,
-        glossary_count: 24,
-        fields: [
-          { name: 'Sales',       type: 'DECIMAL',  domain: '영업·매출', min: 0,    max: 9800000000, synonyms: ['매출', '수익', 'Revenue'] },
-          { name: 'Region',      type: 'STRING',   domain: '지역',      min: '—',  max: '—',        synonyms: ['지역', '권역', '구역'] },
-          { name: 'Quarter',     type: 'STRING',   domain: '시간',      min: '—',  max: '—',        synonyms: ['분기', 'QTR', 'Q'] },
-          { name: 'OccupyRate',  type: 'PERCENT',  domain: '의료·운영', min: 0,    max: 100,        synonyms: ['가동률', '병상점유율'] },
-          { name: 'OutPatient',  type: 'INTEGER',  domain: '의료·운영', min: 0,    max: 5000,       synonyms: ['외래', '외래환자수'] },
+        glossary_count: 2,
+        // 글로서리: Project(기업/도메인) 단위로 파티션된 계층 구조
+        glossaries: [
+          {
+            project_name: 'A사',
+            project_id:   'proj-a-001',
+            datasources: [
+              {
+                luid: 'ds-a-sales-001',
+                name: '매출현황',
+                description: 'A사 영업 매출 원본 데이터',
+                field_count: 3,
+                fields: [
+                  { name: 'Sales',   type: 'DECIMAL', role: 'MEASURE',   domain: '영업·매출', synonyms: ['매출', '수익', 'Revenue'] },
+                  { name: 'Region',  type: 'STRING',  role: 'DIMENSION', domain: '지역',      synonyms: ['지역', '권역', '구역'] },
+                  { name: 'Quarter', type: 'STRING',  role: 'DIMENSION', domain: '시간',      synonyms: ['분기', 'QTR', 'Q'] },
+                ],
+              },
+              {
+                luid: 'ds-a-customer-001',
+                name: '고객분석',
+                description: 'A사 고객 세그먼트 및 거래 현황',
+                field_count: 2,
+                fields: [
+                  { name: 'CustomerID', type: 'STRING',  role: 'DIMENSION', domain: '고객', synonyms: ['고객번호', '고객ID', 'CID'] },
+                  { name: 'Segment',    type: 'STRING',  role: 'DIMENSION', domain: '고객', synonyms: ['세그먼트', '고객군', '등급'] },
+                ],
+              },
+            ],
+          },
+          {
+            project_name: 'B사 (병원)',
+            project_id:   'proj-b-001',
+            datasources: [
+              {
+                luid: 'ds-b-hospital-001',
+                name: '병상가동현황',
+                description: '병원 병상 가동률 및 입원 현황',
+                field_count: 2,
+                fields: [
+                  { name: 'OccupyRate', type: 'PERCENT', role: 'MEASURE',   domain: '의료·운영', synonyms: ['가동률', '병상점유율'] },
+                  { name: 'OutPatient', type: 'INTEGER', role: 'MEASURE',   domain: '의료·운영', synonyms: ['외래', '외래환자수'] },
+                ],
+              },
+            ],
+          },
+        ],
+        // 글로서리 미배정 데이터원본 (클라우드 전체에서 수집된 원본 목록)
+        unassigned_sources: [
+          { luid: '8437bdc4-e2c5-4750-be7b-a268295c66a1', name: 'Superstore Datasource',                         project: 'Samples',  type: 'extract' },
+          { luid: '015fab0d-2138-478f-97e1-ef42b2ae44e2', name: 'Sheet1(시트1)',                                  project: 'Default',  type: 'live'    },
+          { luid: '1940ba43-a26d-4804-a29f-66bb57c288a1', name: 'MSreplication_options(master)-live (no bridge)', project: 'Default',  type: 'live'    },
+          { luid: '4c5e5a56-3518-4108-8e84-6173c6473ac6', name: 'MSreplication_options(master)-live (bridge)',    project: 'Default',  type: 'live'    },
+          { luid: '4876df45-d650-4607-bf55-af56610e2dc0', name: 'MSreplication_options(master)-extract',         project: 'Default',  type: 'extract' },
+          { luid: 'ds-mock-006', name: 'HR_Analytics_2024',                                                       project: 'HR',       type: 'extract' },
+          { luid: 'ds-mock-007', name: 'Financial_Quarterly_Report',                                              project: 'Finance',  type: 'extract' },
+          { luid: 'ds-mock-008', name: 'Marketing_Campaign_Result',                                               project: 'Marketing',type: 'live'    },
         ],
       },
       step02: {
@@ -226,6 +282,14 @@
     return { diff, pct };
   }
 
+  // 아코디언 토글 (글로서리 블록 / 데이터원본 블록 공용)
+  function toggleBlock(header) {
+    const content = header.nextElementSibling;
+    const icon    = header.querySelector('.toggle-icon');
+    const hidden  = content.classList.toggle('hidden');
+    icon.textContent = hidden ? '▼' : '▲';
+  }
+
   function moeTag(pct, thr) {
     if (pct <= thr * 0.5) return { icon: '✅', cls: 'text-emerald-400', lbl: 'PASS' };
     if (pct <= thr)       return { icon: '⚠️', cls: 'text-yellow-400',  lbl: 'WARN' };
@@ -299,24 +363,181 @@
   //  STEP 01 — 메타데이터 프로파일링 & 글로서리
   // ════════════════════════════════════════════════════════════════
   function renderStep01(s) {
-    const rows = s.fields.map(f => [
-      `<span class="font-mono text-blue-300">${f.name}</span>`,
-      `<span class="text-gray-500">${f.type}</span>`,
-      f.domain,
-      String(f.min),
-      String(f.max),
-      `<span class="text-emerald-400/80">${f.synonyms.join(', ')}</span>`,
-    ]);
+    const totalDs     = s.glossaries.reduce((n, g) => n + g.datasources.length, 0);
+    const unassigned  = s.unassigned_sources.length;
+    const typeTag = t => t === 'extract'
+      ? '<span class="text-xs bg-blue-900/40 text-blue-300 border border-blue-800/50 rounded px-1.5 py-0.5">extract</span>'
+      : '<span class="text-xs bg-gray-800 text-gray-400 border border-gray-700 rounded px-1.5 py-0.5">live</span>';
+    const roleTag = r => r === 'MEASURE'
+      ? '<span class="text-[10px] text-sky-400">M</span>'
+      : '<span class="text-[10px] text-amber-400">D</span>';
+
+    // ── 요약 카드 ──────────────────────────────────────────────
+    const summary = card(`${sec('프로파일링 요약')}
+      <div class="grid grid-cols-5 gap-3">
+        ${statBox('글로서리 (프로젝트)',  s.glossary_count + ' 개',   'text-blue-400')}
+        ${statBox('배정 데이터원본',      totalDs + ' 개',            'text-emerald-400')}
+        ${statBox('필드 프로파일링',      s.fields_profiled + ' 개')}
+        ${statBox('미배정 데이터원본',    unassigned + ' 개',         'text-yellow-400')}
+        ${statBox('마지막 실행', new Date(s.last_run).toLocaleString('ko-KR'), 'text-gray-400')}
+      </div>`);
+
+    // ── 글로서리 블록 (Project > Datasource > Fields) ──────────
+    const glossaryBlocks = s.glossaries.map(g => {
+      const dsTotalFields = g.datasources.reduce((n, d) => n + d.fields.length, 0);
+
+      const dsBlocks = g.datasources.map(ds => {
+        const fieldRows = ds.fields.map(f =>
+          `<tr class="border-t border-gray-800/50">
+            <td class="py-1.5 pr-4 font-mono text-blue-300 text-[11px] whitespace-nowrap">${f.name}</td>
+            <td class="py-1.5 pr-4 text-gray-500 text-[10px]">${f.type}</td>
+            <td class="py-1.5 pr-4">${roleTag(f.role)} <span class="text-[10px] text-gray-500">${f.role}</span></td>
+            <td class="py-1.5 pr-4 text-gray-400 text-[10px]">${f.domain}</td>
+            <td class="py-1.5 text-emerald-400/80 text-[10px]">${f.synonyms.join(', ')}</td>
+          </tr>`
+        ).join('');
+
+        return `
+        <div class="border border-gray-800 rounded mb-2">
+          <div class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-800/40 rounded"
+               onclick="toggleBlock(this)">
+            <div class="flex items-center gap-2.5">
+              <span class="text-[10px] font-bold text-gray-600 tracking-widest">DS</span>
+              <span class="text-gray-200 text-xs">${ds.name}</span>
+              <span class="font-mono text-gray-700 text-[9px]">${ds.luid}</span>
+              <span class="text-gray-600 text-[10px]">· 필드 ${ds.fields.length}개</span>
+            </div>
+            <span class="toggle-icon text-gray-600 text-[10px]">▲</span>
+          </div>
+          <div class="px-3 pb-3">
+            <div class="text-gray-600 text-[10px] mb-2">${ds.description}</div>
+            <table class="w-full border-collapse">
+              <thead>
+                <tr>
+                  ${['Field','Type','Role','Domain','Synonyms (글로서리)'].map(h =>
+                    `<th class="text-left text-[10px] text-gray-600 uppercase tracking-wider pb-1.5 pr-4 font-medium">${h}</th>`
+                  ).join('')}
+                </tr>
+              </thead>
+              <tbody>${fieldRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `
+      <div class="border border-blue-900/50 rounded mb-3">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer bg-blue-950/30 hover:bg-blue-950/50 rounded-t"
+             onclick="toggleBlock(this)">
+          <div class="flex items-center gap-3">
+            <span class="text-[10px] font-bold text-blue-500 tracking-widest">GLOSSARY</span>
+            <span class="text-white font-semibold text-sm">${g.project_name}</span>
+            <span class="font-mono text-gray-700 text-[10px]">${g.project_id}</span>
+            <span class="text-gray-500 text-[10px]">데이터원본 ${g.datasources.length}개 · 필드 ${dsTotalFields}개</span>
+          </div>
+          <span class="toggle-icon text-gray-500 text-[10px]">▲</span>
+        </div>
+        <div class="p-3">
+          ${dsBlocks}
+        </div>
+      </div>`;
+    }).join('');
+
+    // ── 미배정 데이터원본 (Project별 그룹 → Datasource 아코디언 → Fields) ──
+    const byProject = {};
+    (s.unassigned_sources || []).forEach(src => {
+      const key = src.project || '(프로젝트 없음)';
+      if (!byProject[key]) byProject[key] = { id: src.project_id || '', sources: [] };
+      byProject[key].sources.push(src);
+    });
+
+    const projectBlocks = Object.entries(byProject).map(([proj, grp]) => {
+      const vdsOk   = grp.sources.filter(s => s.vds_supported).length;
+      const vdsSkip = grp.sources.length - vdsOk;
+
+      const dsItems = grp.sources.map(src => {
+        const fieldRows = (src.fields || []).map(f =>
+          `<tr class="border-t border-gray-800/40">
+            <td class="py-1.5 pr-4 font-mono text-blue-300 text-[11px] whitespace-nowrap">${f.name}</td>
+            <td class="py-1.5 pr-4 text-gray-500 text-[10px]">${f.type}</td>
+            <td class="py-1.5 pr-4">${roleTag(f.role)}<span class="text-[10px] text-gray-600 ml-1">${f.role}</span></td>
+            <td class="py-1.5 pr-4 text-gray-600 text-[10px]">${f.defaultAggregation || '—'}</td>
+          </tr>`
+        ).join('');
+
+        const fieldSection = src.vds_supported
+          ? (src.fields.length > 0
+              ? `<table class="w-full border-collapse mt-2">
+                  <thead><tr>${['Field','Type','Role','Aggregation'].map(h =>
+                    `<th class="text-left text-[10px] text-gray-700 uppercase tracking-wider pb-1.5 pr-4 font-medium">${h}</th>`
+                  ).join('')}</tr></thead>
+                  <tbody>${fieldRows}</tbody>
+                </table>`
+              : `<div class="text-gray-700 text-[10px] mt-2">필드 없음</div>`)
+          : `<div class="text-red-900/60 text-[10px] mt-2 font-mono">${src.skip_reason || 'VDS 미지원'}</div>`;
+
+        const dsColor  = src.vds_supported ? 'text-emerald-400/60' : 'text-red-500/40';
+        const dsLabel  = src.vds_supported ? 'VDS OK' : 'SKIP';
+        const countBadge = src.vds_supported
+          ? `<span class="text-gray-600 text-[10px]">· 필드 ${src.field_count}개</span>`
+          : `<span class="text-red-900/60 text-[10px]">· VDS 미지원</span>`;
+
+        return `
+        <div class="border border-gray-800/70 rounded mb-1.5">
+          <div class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-800/30 rounded"
+               onclick="toggleBlock(this)">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="text-[9px] font-bold ${dsColor} shrink-0">${dsLabel}</span>
+              <span class="text-gray-300 text-xs truncate">${src.name}</span>
+              <span class="font-mono text-gray-700 text-[9px] shrink-0">${src.luid.slice(0,8)}…</span>
+              ${typeTag(src.type)}
+              ${countBadge}
+            </div>
+            <span class="toggle-icon text-gray-600 text-[10px] shrink-0 ml-2">▼</span>
+          </div>
+          <div class="px-3 pb-3 hidden">
+            <div class="font-mono text-gray-700 text-[9px] mb-1">LUID: ${src.luid}</div>
+            ${fieldSection}
+          </div>
+        </div>`;
+      }).join('');
+
+      return `
+      <div class="border border-gray-800 rounded mb-2">
+        <div class="flex items-center justify-between px-4 py-2.5 cursor-pointer bg-gray-900/60 hover:bg-gray-800/40 rounded-t"
+             onclick="toggleBlock(this)">
+          <div class="flex items-center gap-3">
+            <span class="text-[10px] font-bold text-gray-500 tracking-widest">PROJECT</span>
+            <span class="text-gray-200 text-xs font-semibold">${proj}</span>
+            <span class="text-gray-600 text-[10px]">원본 ${grp.sources.length}개</span>
+            <span class="text-emerald-500/50 text-[10px]">VDS ${vdsOk}개</span>
+            ${vdsSkip > 0 ? `<span class="text-red-500/40 text-[10px]">SKIP ${vdsSkip}개</span>` : ''}
+          </div>
+          <span class="toggle-icon text-gray-600 text-[10px]">▲</span>
+        </div>
+        <div class="p-3">
+          ${dsItems}
+        </div>
+      </div>`;
+    }).join('');
+
+    const totalSrc     = (s.unassigned_sources || []).length;
+    const totalVdsOk   = (s.unassigned_sources || []).filter(r => r.vds_supported).length;
+    const unassignedBlock = `
+    <div class="bg-gray-900 border border-gray-800 rounded p-4">
+      ${sec(`미배정 데이터원본 · 클라우드 전체 수집 결과 (총 ${totalSrc}개 · VDS 지원 ${totalVdsOk}개)`)}
+      ${Object.keys(byProject).length
+        ? projectBlocks
+        : `<div class="text-gray-700 text-xs">데이터 없음 — fetch_step01.py 를 먼저 실행하세요.</div>`}
+    </div>`;
+
     document.getElementById('panel-content').innerHTML =
-      card(`${sec('프로파일링 요약')}
-        <div class="grid grid-cols-4 gap-3">
-          ${statBox('필드 프로파일링', s.fields_profiled + ' 개')}
-          ${statBox('글로서리 항목', s.glossary_count + ' 개', 'text-emerald-400')}
-          ${statBox('상태', LABEL[s.status], CLR[s.status])}
-          ${statBox('마지막 실행', new Date(s.last_run).toLocaleString('ko-KR'), 'text-gray-300')}
-        </div>`) +
-      card(`${sec('필드 도메인 & 글로서리 (샘플)')}
-        ${tbl(['Field','Type','Domain','Min','Max','Synonyms (글로서리)'], rows)}`);
+      summary +
+      `<div class="bg-gray-900 border border-gray-800 rounded p-4 mb-4">
+        ${sec('글로서리 현황 (Project > 데이터원본 > 필드)')}
+        ${glossaryBlocks}
+      </div>` +
+      unassignedBlock;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -506,16 +727,15 @@
       const res = await fetch('./app_log.json', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const fetched = await res.json();
-      // 인프라 상태는 health_check.py 실시간 값으로 갱신
       if (fetched.infrastructure) state.data.infrastructure = fetched.infrastructure;
-      // steps는 에이전트 실행 후 기록된 경우에만 갱신 (없으면 MOCK 유지)
-      if (fetched.steps) state.data.steps = fetched.steps;
+      // steps는 step 단위로 병합 (다른 step의 MOCK 데이터 보존)
+      if (fetched.steps) Object.assign(state.data.steps, fetched.steps);
+      document.getElementById('last-updated').textContent =
+        `갱신: ${new Date(fetched.updated_at || Date.now()).toLocaleString('ko-KR')}`;
     } catch {
-      // fetch 실패(file:// 또는 서버 미기동) 시 현재 state 유지
+      document.getElementById('last-updated').textContent = 'app_log.json 없음 (MOCK 표시 중)';
     }
     renderAll();
-    document.getElementById('last-updated').textContent =
-      `Updated: ${new Date().toLocaleTimeString('ko-KR')} · 5s interval`;
   }
 
   function renderAll() {
@@ -525,7 +745,6 @@
   }
 
   fetchAppLog();
-  setInterval(fetchAppLog, 5000);
   </script>
 </body>
 </html>

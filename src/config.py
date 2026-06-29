@@ -86,23 +86,50 @@ class TableauVDSConnector:
             self._auth_token = None
 
     async def get_datasource_metadata(self) -> list[dict[str, Any]]:
-        """사용 가능한 데이터 소스의 메타데이터 목록을 반환한다."""
+        """사용 가능한 데이터 소스의 REST API 목록을 반환한다."""
         response = await self._client.get(self._datasources_path)
         response.raise_for_status()
         # Tableau REST API: {"datasources": {"datasource": [...]}}
         return response.json().get("datasources", {}).get("datasource", [])
 
-    async def query(self, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def get_vds_metadata(self, datasource_luid: str) -> dict[str, Any]:
         """
-        특정 VDS 소스에 쿼리 페이로드를 전달하고 결과를 반환한다.
+        VDS read-metadata 엔드포인트로 필드 수준 메타데이터를 반환한다.
 
         Args:
-            source_id: 대상 데이터 소스 ID
-            payload: VDS 쿼리 인자 (필드, 필터, 집계 등)
+            datasource_luid: 데이터 소스 LUID (get_datasource_metadata의 id 필드)
         """
+        payload = {"datasource": {"datasourceLuid": datasource_luid}}
         response = await self._client.post(
-            f"/api/v1/datasources/{source_id}/query",
+            "/api/v1/vizql-data-service/read-metadata",
             json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def query(
+        self,
+        source_id: str,
+        query_payload: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        VDS query-datasource 엔드포인트로 쿼리를 실행하고 결과를 반환한다.
+
+        Args:
+            source_id: 대상 데이터 소스 LUID
+            query_payload: VDS query 객체 (fields, filters, parameters)
+            options: VDS options 객체 (rowLimit, debug, returnFormat 등)
+        """
+        body: dict[str, Any] = {
+            "datasource": {"datasourceLuid": source_id},
+            "query": query_payload,
+        }
+        if options:
+            body["options"] = options
+        response = await self._client.post(
+            "/api/v1/vizql-data-service/query-datasource",
+            json=body,
         )
         response.raise_for_status()
         return response.json()

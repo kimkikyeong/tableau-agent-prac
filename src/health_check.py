@@ -23,6 +23,8 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT.parent / ".env")
 
+import db as metadb
+
 LOG_PATH = ROOT / "app_log.json"
 SUBPROCESS_TIMEOUT = 15.0
 
@@ -171,6 +173,25 @@ async def run_checks() -> dict:
         check_vds_api(),
         check_vector_db(),
     )
+
+    # metadata.db 에서 step01 스냅샷 조회 (DB 없으면 기존 app_log.json steps 보존)
+    steps: dict = {}
+    if metadb.DB_PATH.exists():
+        try:
+            db_conn = metadb.init_db()
+            snapshot = metadb.build_step01_snapshot(db_conn)
+            db_conn.close()
+            if snapshot:
+                steps["step01"] = snapshot
+        except Exception:
+            pass
+
+    if not steps and LOG_PATH.exists():
+        try:
+            steps = json.loads(LOG_PATH.read_text(encoding="utf-8")).get("steps", {})
+        except Exception:
+            pass
+
     log = {
         "updated_at": datetime.now().isoformat(),
         "infrastructure": {
@@ -179,6 +200,7 @@ async def run_checks() -> dict:
             "vds_api":      vds,
             "vector_db":    vec,
         },
+        "steps": steps,
     }
     LOG_PATH.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     return log
