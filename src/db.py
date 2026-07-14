@@ -60,17 +60,56 @@ CREATE TABLE IF NOT EXISTS field_synonyms (
     UNIQUE (field_id, synonym)
 );
 
-CREATE TABLE IF NOT EXISTS glossaries (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    name         TEXT NOT NULL UNIQUE,
-    project_name TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL
+DROP TABLE IF EXISTS glossary_datasources;
+DROP TABLE IF EXISTS glossaries;
+
+CREATE TABLE IF NOT EXISTS kpis (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS glossary_datasources (
-    glossary_id     INTEGER NOT NULL REFERENCES glossaries(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS kpi_datasources (
+    kpi_id          INTEGER NOT NULL REFERENCES kpis(id) ON DELETE CASCADE,
     datasource_luid TEXT NOT NULL REFERENCES datasources(luid) ON DELETE CASCADE,
-    PRIMARY KEY (glossary_id, datasource_luid)
+    PRIMARY KEY (kpi_id, datasource_luid)
+);
+
+CREATE TABLE IF NOT EXISTS kpi_glossary (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kpi_id        INTEGER NOT NULL REFERENCES kpis(id) ON DELETE CASCADE,
+    field_id      INTEGER NOT NULL REFERENCES fields(id) ON DELETE CASCADE,
+    business_term TEXT NOT NULL DEFAULT '',
+    description   TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    UNIQUE (kpi_id, field_id)
+);
+
+CREATE TABLE IF NOT EXISTS field_stats (
+    field_id       INTEGER PRIMARY KEY REFERENCES fields(id) ON DELETE CASCADE,
+    non_null_count INTEGER,
+    distinct_count INTEGER,
+    min_value      TEXT,
+    max_value      TEXT,
+    mean_value     REAL,
+    top_values     TEXT,
+    collected_at   TEXT NOT NULL
+);
+
+-- KPI 미배정 상태에서도 유효한 필드 단위 비즈니스 글로서리 (LLM 자동 생성).
+-- kpi_glossary는 KPI-필드 조합에 종속되므로, KPI 배정 이전 단계의
+-- 필드 자체의 표시명·의미·활용법을 저장하기 위해 별도 테이블로 분리한다.
+CREATE TABLE IF NOT EXISTS field_business_glossary (
+    field_id        INTEGER PRIMARY KEY REFERENCES fields(id) ON DELETE CASCADE,
+    field_name      TEXT NOT NULL DEFAULT '',
+    logical_name    TEXT NOT NULL DEFAULT '',
+    description     TEXT NOT NULL DEFAULT '',
+    analysis_usage  TEXT NOT NULL DEFAULT '',
+    is_confirmed    INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS datasource_relationships (
@@ -94,7 +133,21 @@ def init_db(path: Path = DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     conn.commit()
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """기존 DB에 누락된 컬럼을 추가하는 단계적 마이그레이션."""
+    migrations = [
+        "ALTER TABLE field_stats ADD COLUMN top_values TEXT",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except Exception:
+            pass  # 이미 존재하는 컬럼이면 무시
 
 
 def upsert_datasource(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
@@ -180,33 +233,40 @@ def upsert_all(conn: sqlite3.Connection, results: list[dict[str, Any]]) -> None:
 
 def build_step01_snapshot(conn: sqlite3.Connection) -> dict[str, Any] | None:
     """
-    metadata.db에서 step01 데이터를 읽어 app_log.json용 snapshot dict를 반환한다.
+    metadata.db에서 KPI·데이터소스·필드를 읽어 app_log.json용 snapshot dict를 반환한다.
     DB가 비어있으면 None 반환.
     """
-    rows = conn.execute(
+    ds_rows = conn.execute(
         "SELECT * FROM datasources ORDER BY project_name, name"
     ).fetchall()
-    if not rows:
+    if not ds_rows:
         return None
 
-    sources: list[dict] = []
-    for row in rows:
+    # ── 데이터소스별 필드 로드 (field DB id는 내부 글로서리 조회용) ──
+    fields_map: dict[str, list[dict]] = {}
+    field_id_map: dict[str, list[int]] = {}
+
+    for row in ds_rows:
         luid = row["luid"]
-        field_rows = conn.execute(
+        frows = conn.execute(
             """
-            SELECT f.field_caption, f.field_name, f.data_type,
+            SELECT f.id, f.field_caption, f.field_name, f.data_type,
                    f.field_role, f.default_aggregation, f.domain,
-                   GROUP_CONCAT(s.synonym, '||') AS synonyms_raw
+                   GROUP_CONCAT(s.synonym, '||') AS synonyms_raw,
+                   fs.non_null_count, fs.distinct_count,
+                   fs.min_value, fs.max_value, fs.mean_value, fs.top_values,
+                   bg.logical_name, bg.description AS bg_description,
+                   bg.analysis_usage, bg.is_confirmed
             FROM fields f
-            LEFT JOIN field_synonyms s ON s.field_id = f.id
+            LEFT JOIN field_synonyms s  ON s.field_id  = f.id
+            LEFT JOIN field_stats    fs ON fs.field_id = f.id
+            LEFT JOIN field_business_glossary bg ON bg.field_id = f.id
             WHERE f.datasource_luid = ?
-            GROUP BY f.id
-            ORDER BY f.id
+            GROUP BY f.id ORDER BY f.id
             """,
             (luid,),
         ).fetchall()
-
-        fields = [
+        fields_map[luid] = [
             {
                 "name":               fr["field_caption"],
                 "fieldName":          fr["field_name"],
@@ -215,53 +275,100 @@ def build_step01_snapshot(conn: sqlite3.Connection) -> dict[str, Any] | None:
                 "defaultAggregation": fr["default_aggregation"],
                 "domain":             fr["domain"],
                 "synonyms": fr["synonyms_raw"].split("||") if fr["synonyms_raw"] else [],
+                "stats": {
+                    "non_null_count": fr["non_null_count"],
+                    "distinct_count": fr["distinct_count"],
+                    "min_value":      fr["min_value"],
+                    "max_value":      fr["max_value"],
+                    "mean_value":     round(fr["mean_value"], 2) if fr["mean_value"] is not None else None,
+                    "top_values":     __import__("json").loads(fr["top_values"]) if fr["top_values"] else None,
+                } if fr["non_null_count"] is not None else None,
+                "business_glossary": {
+                    "logical_name":   fr["logical_name"],
+                    "description":    fr["bg_description"],
+                    "analysis_usage": fr["analysis_usage"],
+                    "is_confirmed":   bool(fr["is_confirmed"]),
+                } if fr["logical_name"] is not None else None,
             }
-            for fr in field_rows
+            for fr in frows
         ]
+        field_id_map[luid] = [fr["id"] for fr in frows]
 
-        sources.append(
-            {
-                "luid":          luid,
-                "name":          row["name"],
-                "project":       row["project_name"],
-                "project_id":    row["project_id"],
-                "type":          row["type"],
-                "contentUrl":    row["content_url"],
-                "vds_supported": bool(row["vds_supported"]),
-                "field_count":   row["field_count"],
-                "fields":        fields,
-                **({"skip_reason": row["skip_reason"]} if row["skip_reason"] else {}),
-            }
-        )
+    def _make_source(row: sqlite3.Row, fields: list[dict]) -> dict:
+        d: dict[str, Any] = {
+            "luid":          row["luid"],
+            "name":          row["name"],
+            "project":       row["project_name"],
+            "project_id":    row["project_id"],
+            "type":          row["type"],
+            "contentUrl":    row["content_url"],
+            "vds_supported": bool(row["vds_supported"]),
+            "field_count":   row["field_count"],
+            "fields":        fields,
+        }
+        if row["skip_reason"]:
+            d["skip_reason"] = row["skip_reason"]
+        return d
 
-    total_fields = sum(r["field_count"] for r in sources if r["vds_supported"])
+    ds_row_map = {row["luid"]: row for row in ds_rows}
+    total_fields = sum(row["field_count"] for row in ds_rows if row["vds_supported"])
 
-    glossary_rows = conn.execute(
-        """
-        SELECT g.id, g.name, g.project_name,
-               GROUP_CONCAT(gd.datasource_luid, '||') AS luids
-        FROM glossaries g
-        LEFT JOIN glossary_datasources gd ON gd.glossary_id = g.id
-        GROUP BY g.id
-        ORDER BY g.name
-        """
-    ).fetchall()
-
-    glossaries: list[dict] = []
+    # ── KPI별 데이터소스·글로서리 수집 ──
+    kpi_rows = conn.execute("SELECT * FROM kpis ORDER BY name").fetchall()
+    kpis: list[dict] = []
     assigned_luids: set[str] = set()
-    for gr in glossary_rows:
-        luids = set(gr["luids"].split("||")) if gr["luids"] else set()
-        assigned_luids |= luids
-        ds_in_glossary = [s for s in sources if s["luid"] in luids]
-        glossaries.append(
-            {
-                "project_name": gr["name"],
-                "project_id":   gr["project_name"],
-                "datasources":  ds_in_glossary,
-            }
-        )
 
-    unassigned = [s for s in sources if s["luid"] not in assigned_luids]
+    for kpi_row in kpi_rows:
+        kpi_id = kpi_row["id"]
+
+        linked_rows = conn.execute(
+            "SELECT datasource_luid FROM kpi_datasources WHERE kpi_id = ?",
+            (kpi_id,),
+        ).fetchall()
+
+        datasources: list[dict] = []
+        for lr in linked_rows:
+            luid = lr["datasource_luid"]
+            if luid not in ds_row_map:
+                continue
+            assigned_luids.add(luid)
+
+            # KPI 내 글로서리 (field_id → row)
+            gloss_rows = conn.execute(
+                """
+                SELECT kg.field_id, kg.business_term, kg.description
+                FROM kpi_glossary kg
+                WHERE kg.kpi_id = ?
+                  AND kg.field_id IN (SELECT id FROM fields WHERE datasource_luid = ?)
+                """,
+                (kpi_id, luid),
+            ).fetchall()
+            gloss = {gr["field_id"]: gr for gr in gloss_rows}
+
+            db_ids = field_id_map.get(luid, [])
+            enriched: list[dict] = []
+            for i, f in enumerate(fields_map.get(luid, [])):
+                ef = dict(f)
+                fid = db_ids[i] if i < len(db_ids) else None
+                if fid and fid in gloss:
+                    ef["business_term"] = gloss[fid]["business_term"]
+                    ef["gloss_desc"]    = gloss[fid]["description"]
+                enriched.append(ef)
+
+            datasources.append(_make_source(ds_row_map[luid], enriched))
+
+        kpis.append({
+            "id":          kpi_row["id"],
+            "name":        kpi_row["name"],
+            "description": kpi_row["description"],
+            "datasources": datasources,
+        })
+
+    unassigned = [
+        _make_source(ds_row_map[luid], fields_map.get(luid, []))
+        for luid in ds_row_map
+        if luid not in assigned_luids
+    ]
 
     updated_at_row = conn.execute(
         "SELECT MAX(updated_at) AS ts FROM datasources"
@@ -270,11 +377,164 @@ def build_step01_snapshot(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return {
         "status":             "done",
         "last_run":           updated_at_row["ts"] or _now(),
-        "glossary_count":     len(glossaries),
+        "kpi_count":          len(kpis),
         "fields_profiled":    total_fields,
-        "glossaries":         glossaries,
+        "kpis":               kpis,
         "unassigned_sources": unassigned,
     }
+
+
+def upsert_field_stats(
+    conn: sqlite3.Connection,
+    field_id: int,
+    non_null_count: int | None,
+    distinct_count: int | None,
+    min_value: str | None,
+    max_value: str | None,
+    mean_value: float | None,
+    top_values: list[str] | None = None,
+) -> None:
+    """필드 기술통계를 upsert한다."""
+    import json as _json
+    top_values_json = _json.dumps(top_values, ensure_ascii=False) if top_values is not None else None
+    conn.execute(
+        """
+        INSERT INTO field_stats
+            (field_id, non_null_count, distinct_count, min_value, max_value, mean_value, top_values, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(field_id) DO UPDATE SET
+            non_null_count = excluded.non_null_count,
+            distinct_count = excluded.distinct_count,
+            min_value      = excluded.min_value,
+            max_value      = excluded.max_value,
+            mean_value     = excluded.mean_value,
+            top_values     = excluded.top_values,
+            collected_at   = excluded.collected_at
+        """,
+        (field_id, non_null_count, distinct_count, min_value, max_value, mean_value, top_values_json, _now()),
+    )
+
+
+def get_fields_missing_glossary(conn: sqlite3.Connection, datasource_luid: str) -> list[dict[str, Any]]:
+    """
+    field_business_glossary가 아직 생성되지 않은 필드를 통계와 함께 반환한다.
+    LLM 글로서리 생성 대상을 선별해 배치 1회 생성 원칙(토큰 최적화)을 지키기 위한 조회.
+    """
+    rows = conn.execute(
+        """
+        SELECT f.id, f.field_caption, f.field_name, f.data_type,
+               f.field_role, f.default_aggregation,
+               fs.non_null_count, fs.distinct_count,
+               fs.min_value, fs.max_value, fs.mean_value
+        FROM fields f
+        LEFT JOIN field_stats fs ON fs.field_id = f.id
+        WHERE f.datasource_luid = ?
+          AND f.id NOT IN (SELECT field_id FROM field_business_glossary)
+        ORDER BY f.id
+        """,
+        (datasource_luid,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_field_business_glossary(
+    conn: sqlite3.Connection,
+    field_id: int,
+    field_name: str,
+    logical_name: str,
+    description: str,
+    analysis_usage: str,
+    is_confirmed: int = 0,
+) -> None:
+    """
+    필드 단위 LLM 생성 비즈니스 글로서리를 upsert한다.
+    is_confirmed=1(현업 담당자 승인)로 확정된 항목은 재생성 결과로 덮어쓰지 않는다.
+    """
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO field_business_glossary
+            (field_id, field_name, logical_name, description, analysis_usage, is_confirmed, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(field_id) DO UPDATE SET
+            field_name     = excluded.field_name,
+            logical_name   = excluded.logical_name,
+            description    = excluded.description,
+            analysis_usage = excluded.analysis_usage,
+            updated_at     = excluded.updated_at
+        WHERE field_business_glossary.is_confirmed = 0
+        """,
+        (field_id, field_name, logical_name, description, analysis_usage, is_confirmed, now, now),
+    )
+
+
+def upsert_kpi(conn: sqlite3.Connection, name: str, description: str = "") -> int:
+    """KPI를 이름으로 upsert하고 id를 반환한다."""
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO kpis (name, description, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            description = excluded.description,
+            updated_at  = excluded.updated_at
+        """,
+        (name, description, now, now),
+    )
+    row = conn.execute("SELECT id FROM kpis WHERE name = ?", (name,)).fetchone()
+    return int(row["id"])
+
+
+def link_kpi_datasource(conn: sqlite3.Connection, kpi_id: int, datasource_luid: str) -> None:
+    """KPI에 데이터소스를 연결한다. 이미 연결되어 있으면 무시한다."""
+    conn.execute(
+        "INSERT OR IGNORE INTO kpi_datasources (kpi_id, datasource_luid) VALUES (?, ?)",
+        (kpi_id, datasource_luid),
+    )
+
+
+def unlink_kpi_datasource(conn: sqlite3.Connection, kpi_id: int, datasource_luid: str) -> None:
+    """KPI에서 데이터소스 연결을 해제한다."""
+    conn.execute(
+        "DELETE FROM kpi_datasources WHERE kpi_id = ? AND datasource_luid = ?",
+        (kpi_id, datasource_luid),
+    )
+
+
+def upsert_kpi_glossary(
+    conn: sqlite3.Connection,
+    kpi_id: int,
+    field_id: int,
+    business_term: str = "",
+    description: str = "",
+) -> None:
+    """KPI 내 필드의 비즈니스 용어·설명을 upsert한다."""
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO kpi_glossary (kpi_id, field_id, business_term, description, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(kpi_id, field_id) DO UPDATE SET
+            business_term = excluded.business_term,
+            description   = excluded.description
+        """,
+        (kpi_id, field_id, business_term, description, now),
+    )
+
+
+def get_kpis(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """KPI 목록과 연결된 데이터소스 수를 반환한다."""
+    rows = conn.execute(
+        """
+        SELECT k.id, k.name, k.description, k.created_at, k.updated_at,
+               COUNT(kd.datasource_luid) AS ds_count
+        FROM kpis k
+        LEFT JOIN kpi_datasources kd ON kd.kpi_id = k.id
+        GROUP BY k.id
+        ORDER BY k.name
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_relationship_candidates(conn: sqlite3.Connection) -> list[dict[str, Any]]:

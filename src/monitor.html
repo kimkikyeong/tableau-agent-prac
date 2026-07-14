@@ -85,65 +85,85 @@
     steps: {
       step01: {
         status: 'done',
-        last_run: '2025-06-26T08:00:00',
-        fields_profiled: 87,
-        glossary_count: 2,
-        // 글로서리: Project(기업/도메인) 단위로 파티션된 계층 구조
-        glossaries: [
+        last_run: '2026-07-10T14:05:35',
+        fields_profiled: 73,
+        kpi_count: 2,
+        // KPI 단위로 데이터원본·글로서리를 관리하는 구조
+        kpis: [
           {
-            project_name: 'A사',
-            project_id:   'proj-a-001',
+            id: 1,
+            name: '주문·재고 KPI',
+            description: '주문, 주문항목, 재고 관련 핵심 지표',
             datasources: [
               {
-                luid: 'ds-a-sales-001',
-                name: '매출현황',
-                description: 'A사 영업 매출 원본 데이터',
-                field_count: 3,
+                luid: 'mock-orders-001',
+                name: 'LE_orders',
+                project: '00. Data source',
+                type: 'extract',
+                vds_supported: true,
+                field_count: 9,
                 fields: [
-                  { name: 'Sales',   type: 'DECIMAL', role: 'MEASURE',   domain: '영업·매출', synonyms: ['매출', '수익', 'Revenue'] },
-                  { name: 'Region',  type: 'STRING',  role: 'DIMENSION', domain: '지역',      synonyms: ['지역', '권역', '구역'] },
-                  { name: 'Quarter', type: 'STRING',  role: 'DIMENSION', domain: '시간',      synonyms: ['분기', 'QTR', 'Q'] },
+                  { name: 'Order ID',      fieldName: 'order_id',      type: 'STRING',  role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '주문번호', gloss_desc: '고유 주문 식별자', stats: { non_null_count: 1234, distinct_count: 1234, min_value: null, max_value: null, mean_value: null } },
+                  { name: 'User ID',       fieldName: 'user_id',       type: 'INTEGER', role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '사용자ID', gloss_desc: '',                  stats: { non_null_count: 1234, distinct_count:  320, min_value: null, max_value: null, mean_value: null } },
+                  { name: 'Status',        fieldName: 'status',        type: 'STRING',  role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '주문상태', gloss_desc: '주문 처리 단계',    stats: { non_null_count: 1234, distinct_count: 5, min_value: null, max_value: null, mean_value: null } },
+                  { name: 'Sale Price',    fieldName: 'sale_price',    type: 'DECIMAL', role: 'MEASURE',   defaultAggregation: 'SUM', domain: '', synonyms: [], business_term: '판매가',   gloss_desc: '실제 결제 금액',    stats: { non_null_count: 1230, distinct_count:  410, min_value: '5.0', max_value: '999.99', mean_value: 125.5 } },
+                  { name: 'Num of Item',   fieldName: 'num_of_item',   type: 'INTEGER', role: 'MEASURE',   defaultAggregation: 'SUM', domain: '', synonyms: [], business_term: '주문수량', gloss_desc: '',                  stats: { non_null_count: 1234, distinct_count:   12, min_value: '1',   max_value: '10',    mean_value: 3.2   } },
                 ],
               },
               {
-                luid: 'ds-a-customer-001',
-                name: '고객분석',
-                description: 'A사 고객 세그먼트 및 거래 현황',
-                field_count: 2,
+                luid: 'mock-order-items-001',
+                name: 'LE_order_items',
+                project: '00. Data source',
+                type: 'extract',
+                vds_supported: true,
+                field_count: 11,
                 fields: [
-                  { name: 'CustomerID', type: 'STRING',  role: 'DIMENSION', domain: '고객', synonyms: ['고객번호', '고객ID', 'CID'] },
-                  { name: 'Segment',    type: 'STRING',  role: 'DIMENSION', domain: '고객', synonyms: ['세그먼트', '고객군', '등급'] },
+                  { name: 'Order Item ID', fieldName: 'order_item_id', type: 'INTEGER', role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '주문항목ID', gloss_desc: '' },
+                  { name: 'Product ID',    fieldName: 'product_id',    type: 'INTEGER', role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '제품ID',     gloss_desc: '' },
+                  { name: 'Sale Price',    fieldName: 'sale_price',    type: 'DECIMAL', role: 'MEASURE',   defaultAggregation: 'SUM', domain: '', synonyms: [], business_term: '판매가',     gloss_desc: '항목별 실제 판매 금액' },
                 ],
               },
             ],
           },
           {
-            project_name: 'B사 (병원)',
-            project_id:   'proj-b-001',
+            id: 2,
+            name: '사용자·제품 KPI',
+            description: '사용자 행동 및 제품 카탈로그 지표',
             datasources: [
               {
-                luid: 'ds-b-hospital-001',
-                name: '병상가동현황',
-                description: '병원 병상 가동률 및 입원 현황',
-                field_count: 2,
+                luid: 'mock-users-001',
+                name: 'LE_users',
+                project: '00. Data source',
+                type: 'extract',
+                vds_supported: true,
+                field_count: 15,
                 fields: [
-                  { name: 'OccupyRate', type: 'PERCENT', role: 'MEASURE',   domain: '의료·운영', synonyms: ['가동률', '병상점유율'] },
-                  { name: 'OutPatient', type: 'INTEGER', role: 'MEASURE',   domain: '의료·운영', synonyms: ['외래', '외래환자수'] },
+                  { name: 'ID',      fieldName: 'id',      type: 'INTEGER', role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '사용자ID', gloss_desc: '고유 사용자 식별자' },
+                  { name: 'Email',   fieldName: 'email',   type: 'STRING',  role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '이메일',   gloss_desc: '' },
+                  { name: 'Country', fieldName: 'country', type: 'STRING',  role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '국가',     gloss_desc: '' },
+                ],
+              },
+              {
+                luid: 'mock-products-001',
+                name: 'LE_products',
+                project: '00. Data source',
+                type: 'extract',
+                vds_supported: true,
+                field_count: 9,
+                fields: [
+                  { name: 'ID',          fieldName: 'id',          type: 'INTEGER', role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '제품ID',   gloss_desc: '' },
+                  { name: 'Name',        fieldName: 'name',        type: 'STRING',  role: 'DIMENSION', defaultAggregation: '',    domain: '', synonyms: [], business_term: '제품명',   gloss_desc: '' },
+                  { name: 'Retail Price',fieldName: 'retail_price',type: 'DECIMAL', role: 'MEASURE',   defaultAggregation: 'AVG', domain: '', synonyms: [], business_term: '소매가격', gloss_desc: '정가 기준 소매 판매 금액' },
                 ],
               },
             ],
           },
         ],
-        // 글로서리 미배정 데이터원본 (클라우드 전체에서 수집된 원본 목록)
+        // KPI 미연결 데이터원본
         unassigned_sources: [
-          { luid: '8437bdc4-e2c5-4750-be7b-a268295c66a1', name: 'Superstore Datasource',                         project: 'Samples',  type: 'extract' },
-          { luid: '015fab0d-2138-478f-97e1-ef42b2ae44e2', name: 'Sheet1(시트1)',                                  project: 'Default',  type: 'live'    },
-          { luid: '1940ba43-a26d-4804-a29f-66bb57c288a1', name: 'MSreplication_options(master)-live (no bridge)', project: 'Default',  type: 'live'    },
-          { luid: '4c5e5a56-3518-4108-8e84-6173c6473ac6', name: 'MSreplication_options(master)-live (bridge)',    project: 'Default',  type: 'live'    },
-          { luid: '4876df45-d650-4607-bf55-af56610e2dc0', name: 'MSreplication_options(master)-extract',         project: 'Default',  type: 'extract' },
-          { luid: 'ds-mock-006', name: 'HR_Analytics_2024',                                                       project: 'HR',       type: 'extract' },
-          { luid: 'ds-mock-007', name: 'Financial_Quarterly_Report',                                              project: 'Finance',  type: 'extract' },
-          { luid: 'ds-mock-008', name: 'Marketing_Campaign_Result',                                               project: 'Marketing',type: 'live'    },
+          { luid: 'mock-dc-001',     name: 'LE_distribution_centers', project: '00. Data source', type: 'extract', vds_supported: true, field_count: 4,  fields: [] },
+          { luid: 'mock-events-001', name: 'LE_events',                project: '00. Data source', type: 'extract', vds_supported: true, field_count: 13, fields: [] },
+          { luid: 'mock-inv-001',    name: 'LE_inventory_items',       project: '00. Data source', type: 'extract', vds_supported: true, field_count: 12, fields: [] },
         ],
       },
       step02: {
@@ -243,7 +263,7 @@
   };
 
   const STEPS = [
-    { n:1, key:'step01', tag:'STEP 01', title:'메타데이터 자동 프로파일링 & 글로서리 빌드', sub:'가이드라인 레이어 구축' },
+    { n:1, key:'step01', tag:'STEP 01', title:'데이터원본 프로파일링 & KPI 글로서리 관리', sub:'KPI 기반 가이드라인 레이어 구축' },
     { n:2, key:'step02', tag:'STEP 02', title:'유저 자연어 입력 및 이중 MCP 서버 라우팅',  sub:'의도 파악 및 디스패치' },
     { n:3, key:'step03', tag:'STEP 03', title:'Pre-hook 가드레일 & 레시피 자동 생성',      sub:'추출 조건 검증 및 저장' },
     { n:4, key:'step04', tag:'STEP 04', title:'VDS API 통신 및 N차 데이터 검증 루프',      sub:'Agent 결과 vs 대시보드 비교·보정' },
@@ -360,11 +380,22 @@
   }
 
   // ════════════════════════════════════════════════════════════════
-  //  STEP 01 — 메타데이터 프로파일링 & 글로서리
+  //  STEP 01 — 데이터원본 프로파일링 & KPI 글로서리
   // ════════════════════════════════════════════════════════════════
+  const fmtNum = v => {
+    const n = parseFloat(v);
+    return isNaN(n) ? String(v) : n.toLocaleString('ko-KR', {maximumFractionDigits: 1});
+  };
+  const dash = '<span class="text-gray-700 text-[10px]">—</span>';
+  const statCell = (v, cls = 'text-gray-400') =>
+    v != null
+      ? `<span class="font-mono text-[10px] ${cls}">${fmtNum(v)}</span>`
+      : dash;
+
   function renderStep01(s) {
-    const totalDs     = s.glossaries.reduce((n, g) => n + g.datasources.length, 0);
-    const unassigned  = s.unassigned_sources.length;
+    const totalDs    = (s.kpis || []).reduce((n, k) => n + k.datasources.length, 0);
+    const unassigned = (s.unassigned_sources || []).length;
+
     const typeTag = t => t === 'extract'
       ? '<span class="text-xs bg-blue-900/40 text-blue-300 border border-blue-800/50 rounded px-1.5 py-0.5">extract</span>'
       : '<span class="text-xs bg-gray-800 text-gray-400 border border-gray-700 rounded px-1.5 py-0.5">live</span>';
@@ -375,27 +406,49 @@
     // ── 요약 카드 ──────────────────────────────────────────────
     const summary = card(`${sec('프로파일링 요약')}
       <div class="grid grid-cols-5 gap-3">
-        ${statBox('글로서리 (프로젝트)',  s.glossary_count + ' 개',   'text-blue-400')}
-        ${statBox('배정 데이터원본',      totalDs + ' 개',            'text-emerald-400')}
-        ${statBox('필드 프로파일링',      s.fields_profiled + ' 개')}
-        ${statBox('미배정 데이터원본',    unassigned + ' 개',         'text-yellow-400')}
+        ${statBox('KPI',               (s.kpi_count ?? 0) + ' 개', 'text-violet-400')}
+        ${statBox('연결 데이터원본',   totalDs + ' 개',             'text-emerald-400')}
+        ${statBox('필드 프로파일링',   s.fields_profiled + ' 개')}
+        ${statBox('미연결 데이터원본', unassigned + ' 개',          'text-yellow-400')}
         ${statBox('마지막 실행', new Date(s.last_run).toLocaleString('ko-KR'), 'text-gray-400')}
       </div>`);
 
-    // ── 글로서리 블록 (Project > Datasource > Fields) ──────────
-    const glossaryBlocks = s.glossaries.map(g => {
-      const dsTotalFields = g.datasources.reduce((n, d) => n + d.fields.length, 0);
+    // ── KPI 블록 (KPI > 데이터원본 > 필드·글로서리) ────────────
+    const kpiBlocks = (s.kpis || []).map(kpi => {
+      const dsTotalFields = kpi.datasources.reduce((n, d) => n + d.fields.length, 0);
 
-      const dsBlocks = g.datasources.map(ds => {
-        const fieldRows = ds.fields.map(f =>
-          `<tr class="border-t border-gray-800/50">
+      const dsBlocks = kpi.datasources.map(ds => {
+        const hasGloss  = ds.fields.some(f => f.business_term);
+        const hasStats  = ds.fields.some(f => f.stats && f.stats.non_null_count != null);
+        const STAT_HEADERS = ['Non-null', 'Distinct', 'Min', 'Max', 'Avg'];
+        const headers   = ['Field', 'Type', 'Role', 'Aggregation',
+                           ...(hasGloss  ? ['Business Term', '설명'] : []),
+                           ...(hasStats  ? STAT_HEADERS : []),
+                           'Synonyms'];
+
+        const fieldRows = ds.fields.map(f => {
+          const s = f.stats;
+          const isMeasure = f.role === 'MEASURE';
+          const statCols = hasStats ? `
+            <td class="py-1.5 pr-4 text-right">${s && s.non_null_count != null ? statCell(s.non_null_count) : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${s && s.distinct_count  != null ? statCell(s.distinct_count)  : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.min_value   != null ? statCell(s.min_value)            : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.max_value   != null ? statCell(s.max_value)            : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.mean_value  != null ? statCell(s.mean_value, 'text-sky-400/80') : dash}</td>
+          ` : '';
+          return `<tr class="border-t border-gray-800/50">
             <td class="py-1.5 pr-4 font-mono text-blue-300 text-[11px] whitespace-nowrap">${f.name}</td>
             <td class="py-1.5 pr-4 text-gray-500 text-[10px]">${f.type}</td>
-            <td class="py-1.5 pr-4">${roleTag(f.role)} <span class="text-[10px] text-gray-500">${f.role}</span></td>
-            <td class="py-1.5 pr-4 text-gray-400 text-[10px]">${f.domain}</td>
-            <td class="py-1.5 text-emerald-400/80 text-[10px]">${f.synonyms.join(', ')}</td>
-          </tr>`
-        ).join('');
+            <td class="py-1.5 pr-4">${roleTag(f.role)}<span class="text-[10px] text-gray-500 ml-1">${f.role}</span></td>
+            <td class="py-1.5 pr-4 text-gray-600 text-[10px]">${f.defaultAggregation || '—'}</td>
+            ${hasGloss
+              ? `<td class="py-1.5 pr-4 text-violet-300 text-[10px] font-semibold">${f.business_term || '—'}</td>
+                 <td class="py-1.5 pr-4 text-gray-500 text-[10px]">${f.gloss_desc || ''}</td>`
+              : ''}
+            ${statCols}
+            <td class="py-1.5 text-emerald-400/80 text-[10px]">${(f.synonyms || []).join(', ')}</td>
+          </tr>`;
+        }).join('');
 
         return `
         <div class="border border-gray-800 rounded mb-2">
@@ -406,19 +459,15 @@
               <span class="text-gray-200 text-xs">${ds.name}</span>
               <span class="font-mono text-gray-700 text-[9px]">${ds.luid}</span>
               <span class="text-gray-600 text-[10px]">· 필드 ${ds.fields.length}개</span>
+              ${typeTag(ds.type)}
             </div>
             <span class="toggle-icon text-gray-600 text-[10px]">▲</span>
           </div>
           <div class="px-3 pb-3">
-            <div class="text-gray-600 text-[10px] mb-2">${ds.description}</div>
             <table class="w-full border-collapse">
-              <thead>
-                <tr>
-                  ${['Field','Type','Role','Domain','Synonyms (글로서리)'].map(h =>
-                    `<th class="text-left text-[10px] text-gray-600 uppercase tracking-wider pb-1.5 pr-4 font-medium">${h}</th>`
-                  ).join('')}
-                </tr>
-              </thead>
+              <thead><tr>${headers.map(h =>
+                `<th class="text-left text-[10px] text-gray-600 uppercase tracking-wider pb-1.5 pr-4 font-medium">${h}</th>`
+              ).join('')}</tr></thead>
               <tbody>${fieldRows}</tbody>
             </table>
           </div>
@@ -426,24 +475,24 @@
       }).join('');
 
       return `
-      <div class="border border-blue-900/50 rounded mb-3">
-        <div class="flex items-center justify-between px-4 py-3 cursor-pointer bg-blue-950/30 hover:bg-blue-950/50 rounded-t"
+      <div class="border border-violet-900/50 rounded mb-3">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer bg-violet-950/30 hover:bg-violet-950/50 rounded-t"
              onclick="toggleBlock(this)">
           <div class="flex items-center gap-3">
-            <span class="text-[10px] font-bold text-blue-500 tracking-widest">GLOSSARY</span>
-            <span class="text-white font-semibold text-sm">${g.project_name}</span>
-            <span class="font-mono text-gray-700 text-[10px]">${g.project_id}</span>
-            <span class="text-gray-500 text-[10px]">데이터원본 ${g.datasources.length}개 · 필드 ${dsTotalFields}개</span>
+            <span class="text-[10px] font-bold text-violet-500 tracking-widest">KPI</span>
+            <span class="text-white font-semibold text-sm">${kpi.name}</span>
+            ${kpi.description ? `<span class="text-gray-600 text-[10px]">${kpi.description}</span>` : ''}
+            <span class="text-gray-500 text-[10px]">데이터원본 ${kpi.datasources.length}개 · 필드 ${dsTotalFields}개</span>
           </div>
           <span class="toggle-icon text-gray-500 text-[10px]">▲</span>
         </div>
         <div class="p-3">
-          ${dsBlocks}
+          ${dsBlocks || '<div class="text-gray-700 text-xs px-1">연결된 데이터원본 없음</div>'}
         </div>
       </div>`;
     }).join('');
 
-    // ── 미배정 데이터원본 (Project별 그룹 → Datasource 아코디언 → Fields) ──
+    // ── 미연결 데이터원본 (Project별 그룹 → DS 아코디언 → Fields) ──
     const byProject = {};
     (s.unassigned_sources || []).forEach(src => {
       const key = src.project || '(프로젝트 없음)';
@@ -456,19 +505,33 @@
       const vdsSkip = grp.sources.length - vdsOk;
 
       const dsItems = grp.sources.map(src => {
-        const fieldRows = (src.fields || []).map(f =>
-          `<tr class="border-t border-gray-800/40">
+        const srcHasStats = (src.fields || []).some(f => f.stats && f.stats.non_null_count != null);
+        const SRC_STAT_HEADERS = ['Non-null', 'Distinct', 'Min', 'Max', 'Avg'];
+        const fieldRows = (src.fields || []).map(f => {
+          const s = f.stats;
+          const isMeasure = f.role === 'MEASURE';
+          const statCols = srcHasStats ? `
+            <td class="py-1.5 pr-4 text-right">${s && s.non_null_count != null ? statCell(s.non_null_count) : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${s && s.distinct_count  != null ? statCell(s.distinct_count)  : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.min_value   != null ? statCell(s.min_value)            : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.max_value   != null ? statCell(s.max_value)            : dash}</td>
+            <td class="py-1.5 pr-4 text-right">${isMeasure && s && s.mean_value  != null ? statCell(s.mean_value, 'text-sky-400/80') : dash}</td>
+          ` : '';
+          return `<tr class="border-t border-gray-800/40">
             <td class="py-1.5 pr-4 font-mono text-blue-300 text-[11px] whitespace-nowrap">${f.name}</td>
             <td class="py-1.5 pr-4 text-gray-500 text-[10px]">${f.type}</td>
             <td class="py-1.5 pr-4">${roleTag(f.role)}<span class="text-[10px] text-gray-600 ml-1">${f.role}</span></td>
             <td class="py-1.5 pr-4 text-gray-600 text-[10px]">${f.defaultAggregation || '—'}</td>
-          </tr>`
-        ).join('');
+            ${statCols}
+          </tr>`;
+        }).join('');
 
+        const unassignedHeaders = ['Field', 'Type', 'Role', 'Aggregation',
+                                   ...(srcHasStats ? SRC_STAT_HEADERS : [])];
         const fieldSection = src.vds_supported
-          ? (src.fields.length > 0
+          ? (src.fields && src.fields.length > 0
               ? `<table class="w-full border-collapse mt-2">
-                  <thead><tr>${['Field','Type','Role','Aggregation'].map(h =>
+                  <thead><tr>${unassignedHeaders.map(h =>
                     `<th class="text-left text-[10px] text-gray-700 uppercase tracking-wider pb-1.5 pr-4 font-medium">${h}</th>`
                   ).join('')}</tr></thead>
                   <tbody>${fieldRows}</tbody>
@@ -476,8 +539,8 @@
               : `<div class="text-gray-700 text-[10px] mt-2">필드 없음</div>`)
           : `<div class="text-red-900/60 text-[10px] mt-2 font-mono">${src.skip_reason || 'VDS 미지원'}</div>`;
 
-        const dsColor  = src.vds_supported ? 'text-emerald-400/60' : 'text-red-500/40';
-        const dsLabel  = src.vds_supported ? 'VDS OK' : 'SKIP';
+        const dsColor    = src.vds_supported ? 'text-emerald-400/60' : 'text-red-500/40';
+        const dsLabel    = src.vds_supported ? 'VDS OK' : 'SKIP';
         const countBadge = src.vds_supported
           ? `<span class="text-gray-600 text-[10px]">· 필드 ${src.field_count}개</span>`
           : `<span class="text-red-900/60 text-[10px]">· VDS 미지원</span>`;
@@ -515,17 +578,15 @@
           </div>
           <span class="toggle-icon text-gray-600 text-[10px]">▲</span>
         </div>
-        <div class="p-3">
-          ${dsItems}
-        </div>
+        <div class="p-3">${dsItems}</div>
       </div>`;
     }).join('');
 
-    const totalSrc     = (s.unassigned_sources || []).length;
-    const totalVdsOk   = (s.unassigned_sources || []).filter(r => r.vds_supported).length;
+    const totalSrc   = (s.unassigned_sources || []).length;
+    const totalVdsOk = (s.unassigned_sources || []).filter(r => r.vds_supported).length;
     const unassignedBlock = `
     <div class="bg-gray-900 border border-gray-800 rounded p-4">
-      ${sec(`미배정 데이터원본 · 클라우드 전체 수집 결과 (총 ${totalSrc}개 · VDS 지원 ${totalVdsOk}개)`)}
+      ${sec(`KPI 미연결 데이터원본 (총 ${totalSrc}개 · VDS 지원 ${totalVdsOk}개)`)}
       ${Object.keys(byProject).length
         ? projectBlocks
         : `<div class="text-gray-700 text-xs">데이터 없음 — fetch_step01.py 를 먼저 실행하세요.</div>`}
@@ -534,8 +595,8 @@
     document.getElementById('panel-content').innerHTML =
       summary +
       `<div class="bg-gray-900 border border-gray-800 rounded p-4 mb-4">
-        ${sec('글로서리 현황 (Project > 데이터원본 > 필드)')}
-        ${glossaryBlocks}
+        ${sec('KPI 현황 (KPI > 데이터원본 > 필드 · 글로서리)')}
+        ${kpiBlocks || `<div class="text-gray-700 text-xs">KPI 없음 — KPI를 생성하고 데이터원본을 연결하세요.</div>`}
       </div>` +
       unassignedBlock;
   }

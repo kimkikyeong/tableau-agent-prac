@@ -20,6 +20,10 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
+# Windows cp949 터미널에서 유니코드 출력이 깨지는 문제 방지
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from dotenv import load_dotenv
 load_dotenv(ROOT.parent / ".env")
 
@@ -216,7 +220,7 @@ def _print_summary(log: dict) -> None:
         extra  = item.get("error") or item.get("note") or ""
         if item.get("tools"):
             extra = f"tools: {item['tools']}"
-        extra_str = f"\n    ↳ {extra}" if extra else ""
+        extra_str = f"\n    >> {extra}" if extra else ""
         print(f"  {item['label']:<28}  [{status:<14}]  {ms}{extra_str}")
     print("─" * 60)
 

@@ -150,9 +150,43 @@ Claude (LLM) — 시스템 프롬프트 + 툴 description 분석
 
 ---
 
-## 4. 단계별 개발 로드맵
+## 4. STEP 01 — 메타데이터 수집 파이프라인 및 모니터링
 
-### Phase 1 — 기반 구축 (현재 단계)
+멀티 MCP 에이전트 런타임과 별도로, **오프라인 데이터 수집/프로파일링 파이프라인**을 구축했다. 에이전트가 참조할 KPI·데이터소스·필드 메타데이터를 사전에 SQLite에 적재하고, 파이프라인 진행 상황과 인프라 상태를 대시보드로 모니터링한다.
+
+| 파일 | 역할 |
+|---|---|
+| `src/fetch_step01.py` | STEP 01 실행 스크립트. VDS REST API(`read-metadata`, `query-datasource`)로 데이터소스·필드 메타데이터 및 필드별 기술 통계(결측·고유값·최소/최대/평균·상위값)를 수집해 `metadata.db`에 적재하고, 이어서 **Gemini API**로 필드 비즈니스 글로서리를 자동 생성한 뒤 `app_log.json` 스냅샷을 생성한다. |
+| `src/db.py` | SQLite 저장소. `datasources` / `fields` / `field_synonyms` / `kpis` / `kpi_datasources` / `kpi_glossary` / `field_business_glossary` / `field_stats` / `datasource_relationships` 스키마와 `build_step01_snapshot()`(KPI→데이터소스→필드 트리 조립) 제공. |
+| `src/health_check.py` | VDS API·ta_mcp·공식 Tableau MCP 인프라 상태를 병렬 점검하고 STEP 01 스냅샷을 `app_log.json`에 병합. `--watch`(주기 점검), `--serve`(정적 서버 기동) 옵션 제공. |
+| `src/monitor.html` | `app_log.json` 기반 STEP 01~05 파이프라인 모니터링 대시보드(정적 페이지). STEP 01은 실데이터, STEP 02~05는 Phase 2/3 구현 전까지 목업으로 표시. |
+
+```
+uv run python src/fetch_step01.py        # metadata.db + app_log.json 생성 (필드 통계 + Gemini 글로서리 포함)
+uv run python src/health_check.py --serve  # 헬스체크 + http://localhost:8000/monitor.html
+```
+
+이 파이프라인은 향후 Phase 2의 `MetadataProfiler`(자동 프로파일링) 및 `RecipeStore`(레시피 관리)의 데이터 기반이 되며, `kpi_glossary`/`field_synonyms` 테이블은 업무 담당자 가이드라인 바인딩과 연결될 예정이다.
+
+### 4-1. 필드 비즈니스 글로서리 자동 생성 (LLM: Gemini)
+
+KPI 미배정 상태에서도 필드 자체의 비즈니스 의미를 확보하기 위해, `kpi_glossary`(KPI-필드 종속)와 별개로 `field_business_glossary`(필드 단독) 테이블을 두고 LLM이 자동 채운다.
+
+| 항목 | 내용 |
+|---|---|
+| 호출 시점 | STEP 01의 필드 메타데이터·기술통계 수집 직후, 배치·오프라인 1회성 실행 (실시간 에이전트 런타임과 분리) |
+| 사용 모델 | Gemini (`google-genai` SDK), 모델 ID는 `GEMINI_MODEL` 환경변수 (기본값 `gemini-3.5-flash`) |
+| 페르소나 | "병원 경영 분석 스키마 전문 비즈니스 분석가" 시스템 인스트럭션 |
+| 입력 컨텍스트 | 필드 원본명·타입·역할·기본 집계 + VDS 통계(결측/고유값/최소/최대/평균) + (선택) `src/guideline.txt` 업무 가이드라인 |
+| 구조화된 출력 | Pydantic `GlossaryItem`(`field_name`/`logical_name`/`description`/`analysis_usage`) 리스트를 `response_schema`로 강제, 파싱 실패 시 원문 JSON 재파싱 폴백 |
+| 토큰 최적화 | `get_fields_missing_glossary()`로 미생성 필드만 선별 호출, `is_confirmed=1`(현업 승인) 필드는 재생성 대상에서 제외 |
+| 장애 격리 | `GEMINI_API_KEY` 미설정 또는 API 오류 시 해당 필드만 스킵, STEP 01 나머지 파이프라인은 정상 진행 |
+
+---
+
+## 5. 단계별 개발 로드맵
+
+### Phase 1 — 기반 구축 (완료)
 
 **목표**: 로컬 환경에서 두 MCP 서버가 연결되고, 단순 질문에 정확한 서버로 라우팅되는 것을 검증한다.
 
@@ -162,6 +196,8 @@ Claude (LLM) — 시스템 프롬프트 + 툴 description 분석
 | 핵심 구현 | `config.py`, `tableau_mcp.py`(ta_mcp), `main_agent.py` |
 | 가드레일 | Pre-hook: 필수 인자 검증 / Post-hook: 응답 키 검증 |
 | 이력서 키워드 | `MCP`, `LLM Tool Use`, `Anthropic API`, `Tableau VDS API`, `async Python` |
+| STEP 01 확장 | `fetch_step01.py`/`db.py`로 KPI·필드 메타데이터 수집 및 SQLite 저장소 구축 완료, `health_check.py`/`monitor.html`로 파이프라인 모니터링 체계 구축 완료 |
+| STEP 01 글로서리 확장 | `field_business_glossary` 스키마 및 Gemini 기반 자동 생성 파이프라인 구축 완료 (구조화된 출력, 토큰 최적화, 가이드라인 주입 포함) |
 
 ### Phase 2 — 정합성 보정 루프 및 레시피 관리
 
