@@ -124,6 +124,16 @@ CREATE TABLE IF NOT EXISTS datasource_relationships (
     created_at  TEXT NOT NULL,
     UNIQUE (from_luid, to_luid, from_field, to_field)
 );
+
+-- 업무 담당자가 지표별로 작성하는 분석 가이드라인. Agent 대화(VDS 쿼리 작성)와
+-- STEP 01 글로서리 생성 양쪽에서 참고 컨텍스트로 주입되므로 제목 단위로 여러 개 저장한다.
+CREATE TABLE IF NOT EXISTS guidelines (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 """
 
 
@@ -200,13 +210,28 @@ def upsert_datasource(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
 
     fields: list[dict] = data.get("fields", [])
     if fields:
-        conn.execute("DELETE FROM fields WHERE datasource_luid = ?", (luid,))
+        # 소스에서 사라진 필드만 제거한다. 존재하는 필드는 upsert로 id를 보존해야
+        # field_stats/field_business_glossary/kpi_glossary 등 field_id FK 참조 데이터가
+        # 재수집 때마다 CASCADE 삭제되는 것을 막을 수 있다.
+        captions = [f.get("name", "") for f in fields]
+        placeholders = ",".join("?" for _ in captions)
+        conn.execute(
+            f"DELETE FROM fields WHERE datasource_luid = ? AND field_caption NOT IN ({placeholders})",
+            (luid, *captions),
+        )
         conn.executemany(
             """
             INSERT INTO fields
                 (datasource_luid, field_caption, field_name,
                  data_type, field_role, default_aggregation, domain, collected_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(datasource_luid, field_caption) DO UPDATE SET
+                field_name           = excluded.field_name,
+                data_type            = excluded.data_type,
+                field_role           = excluded.field_role,
+                default_aggregation  = excluded.default_aggregation,
+                domain               = excluded.domain,
+                collected_at         = excluded.collected_at
             """,
             [
                 (
@@ -461,11 +486,91 @@ def upsert_field_business_glossary(
             logical_name   = excluded.logical_name,
             description    = excluded.description,
             analysis_usage = excluded.analysis_usage,
+            is_confirmed   = excluded.is_confirmed,
             updated_at     = excluded.updated_at
         WHERE field_business_glossary.is_confirmed = 0
         """,
         (field_id, field_name, logical_name, description, analysis_usage, is_confirmed, now, now),
     )
+
+
+def list_datasources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """VDS 지원 데이터소스 목록을 반환한다 (글로서리 큐레이터 필터 드롭다운용)."""
+    rows = conn.execute(
+        """
+        SELECT luid, name, project_name, field_count
+        FROM datasources
+        WHERE vds_supported = 1
+        ORDER BY project_name, name
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_glossary_rows(
+    conn: sqlite3.Connection,
+    datasource_luid: str | None = None,
+    unconfirmed_only: bool = False,
+    search: str | None = None,
+    field_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """글로서리 큐레이터 테이블용 필드+글로서리 조인 목록을 반환한다."""
+    clauses = ["d.vds_supported = 1"]
+    params: list[Any] = []
+    if datasource_luid:
+        clauses.append("f.datasource_luid = ?")
+        params.append(datasource_luid)
+    if unconfirmed_only:
+        clauses.append("COALESCE(bg.is_confirmed, 0) = 0")
+    if search:
+        clauses.append("(f.field_caption LIKE ? OR bg.logical_name LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like])
+    if field_id is not None:
+        clauses.append("f.id = ?")
+        params.append(field_id)
+    where = " AND ".join(clauses)
+
+    rows = conn.execute(
+        f"""
+        SELECT f.id AS field_id, f.field_caption, f.data_type, f.field_role,
+               f.datasource_luid, d.name AS datasource_name,
+               bg.logical_name, bg.description, bg.analysis_usage,
+               COALESCE(bg.is_confirmed, 0) AS is_confirmed
+        FROM fields f
+        JOIN datasources d ON d.luid = f.datasource_luid
+        LEFT JOIN field_business_glossary bg ON bg.field_id = f.id
+        WHERE {where}
+        ORDER BY d.name, f.field_caption
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_glossary_row(conn: sqlite3.Connection, field_id: int) -> dict[str, Any] | None:
+    """단일 필드의 글로서리 큐레이터 row를 반환한다 (get_glossary_rows와 동일한 컬럼 shape, PATCH/재생성 응답용)."""
+    rows = get_glossary_rows(conn, field_id=field_id)
+    return rows[0] if rows else None
+
+
+def get_field_for_glossary(conn: sqlite3.Connection, field_id: int) -> dict[str, Any] | None:
+    """단일 필드의 메타데이터·통계·글로서리 승인 상태를 함께 반환한다 (재생성 API 전용)."""
+    row = conn.execute(
+        """
+        SELECT f.id, f.field_caption, f.data_type, f.field_role, f.default_aggregation,
+               f.datasource_luid, d.name AS datasource_name,
+               fs.non_null_count, fs.distinct_count, fs.min_value, fs.max_value, fs.mean_value,
+               COALESCE(bg.is_confirmed, 0) AS is_confirmed
+        FROM fields f
+        JOIN datasources d ON d.luid = f.datasource_luid
+        LEFT JOIN field_stats fs ON fs.field_id = f.id
+        LEFT JOIN field_business_glossary bg ON bg.field_id = f.id
+        WHERE f.id = ?
+        """,
+        (field_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def upsert_kpi(conn: sqlite3.Connection, name: str, description: str = "") -> int:
@@ -562,6 +667,59 @@ def get_relationship_candidates(conn: sqlite3.Connection) -> list[dict[str, Any]
         """
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_guidelines(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """저장된 분석 가이드라인 목록을 최근 수정 순으로 반환한다."""
+    rows = conn.execute(
+        "SELECT id, title, content, created_at, updated_at FROM guidelines ORDER BY updated_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_guideline(conn: sqlite3.Connection, guideline_id: int) -> dict[str, Any] | None:
+    """가이드라인 1건을 조회한다."""
+    row = conn.execute(
+        "SELECT id, title, content, created_at, updated_at FROM guidelines WHERE id = ?",
+        (guideline_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def create_guideline(conn: sqlite3.Connection, title: str, content: str) -> int:
+    """가이드라인을 신규 생성하고 id를 반환한다."""
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO guidelines (title, content, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (title, content, now, now),
+    )
+    return int(cur.lastrowid)
+
+
+def update_guideline(conn: sqlite3.Connection, guideline_id: int, title: str, content: str) -> bool:
+    """가이드라인을 수정한다. 대상이 없으면 False."""
+    cur = conn.execute(
+        "UPDATE guidelines SET title = ?, content = ?, updated_at = ? WHERE id = ?",
+        (title, content, _now(), guideline_id),
+    )
+    return cur.rowcount > 0
+
+
+def delete_guideline(conn: sqlite3.Connection, guideline_id: int) -> bool:
+    """가이드라인을 삭제한다. 대상이 없으면 False."""
+    cur = conn.execute("DELETE FROM guidelines WHERE id = ?", (guideline_id,))
+    return cur.rowcount > 0
+
+
+def get_guidelines_context_text(conn: sqlite3.Connection) -> str | None:
+    """
+    저장된 모든 가이드라인을 '[제목] 본문' 형식으로 이어붙여 LLM 프롬프트용 컨텍스트를 만든다.
+    Agent 대화(VDS 쿼리 작성)와 STEP 01 글로서리 생성 양쪽에서 공통으로 사용한다.
+    """
+    rows = list_guidelines(conn)
+    if not rows:
+        return None
+    return "\n\n".join(f"[{r['title']}]\n{r['content']}" for r in rows if r["content"].strip())
 
 
 def _now() -> str:

@@ -1,0 +1,45 @@
+/* Tailwind CDN이 커버하지 못하는 소소한 보강 스타일만 최소한으로 정의한다. */
+
+/* select 등 네이티브 폼 컨트롤의 팝업 렌더링(옵션 목록 배경/글자색)이
+   테마 토글 상태를 따라가도록 color-scheme을 명시한다. 이게 없으면
+   다크 모드에서 네이티브 드롭다운 목록 글자색이 거의 안 보인다. */
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
+.chat-bubble {
+  animation: chat-fade-in 0.15s ease-out;
+}
+
+@keyframes chat-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.glossary-table td textarea {
+  field-sizing: content;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 9999px;
+}
+
+.nav-btn.nav-active {
+  background-color: rgb(238 242 255);
+  color: rgb(67 56 202);
+  font-weight: 600;
+}
+
+.dark .nav-btn.nav-active {
+  background-color: rgba(49, 46, 129, 0.4);
+  color: rgb(165 180 252);
+}

@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 import anthropic
 from dotenv import load_dotenv
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+sys.path.insert(0, str(Path(__file__).parent))
+import db as metadb
 
 load_dotenv()
 
@@ -61,7 +66,8 @@ _SYSTEM_PROMPT = """\
 
 ## 규칙
 - 툴 호출 전 어떤 서버를 선택했는지, 현재 몇 단계인지 한 줄로 밝히세요.
-- 2단계에서 확인한 fieldCaption을 3단계 fields에 그대로 사용하세요. 임의로 필드명을 추측하지 마세요.\
+- 2단계에서 확인한 fieldCaption을 3단계 fields에 그대로 사용하세요. 임의로 필드명을 추측하지 마세요.
+- 아래에 업무 담당자 분석 가이드라인이 주어지면, VDS 쿼리(필드·집계·필터 구성)를 작성할 때 반드시 우선 참고하세요.\
 """
 
 
@@ -109,12 +115,24 @@ class TableauAgent:
         self._llm = anthropic.AsyncAnthropic()
 
     async def _connect_servers(self) -> None:
-        # 공식 Tableau MCP — 명령어는 환경 변수로 지정
+        # 공식 Tableau MCP — 명령어는 환경 변수로 지정.
+        # 공식 MCP 서버는 SERVER/SITE_NAME/PAT_NAME/PAT_VALUE 이름으로 인증 정보를 기대하므로
+        # 프로젝트 표준 환경변수(TABLEAU_VDS_ENDPOINT 등)에서 매핑해 서브프로세스에 전달한다.
         official_cmd = os.environ["TABLEAU_OFFICIAL_MCP_CMD"]
         official_args = os.environ.get("TABLEAU_OFFICIAL_MCP_ARGS", "").split()
         await self._mcp.connect(
             "official_tableau_mcp",
-            StdioServerParameters(command=official_cmd, args=official_args),
+            StdioServerParameters(
+                command=official_cmd,
+                args=official_args,
+                env={
+                    **os.environ,
+                    "SERVER":    os.environ.get("TABLEAU_VDS_ENDPOINT", "").rstrip("/"),
+                    "SITE_NAME": os.environ.get("TABLEAU_SITE_ID", ""),
+                    "PAT_NAME":  os.environ.get("TABLEAU_PAT_NAME", ""),
+                    "PAT_VALUE": os.environ.get("TABLEAU_PAT_SECRET", ""),
+                },
+            ),
         )
 
         # ta_mcp — 커스텀 VDS 서버 (현재 프로젝트)
@@ -126,15 +144,33 @@ class TableauAgent:
             ),
         )
 
-    async def run(self, user_query: str) -> str:
-        """사용자 질문을 받아 MCP 툴을 활용한 최종 답변을 반환한다."""
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_query}]
+    def _build_system_prompt(self) -> str:
+        """저장된 분석 가이드라인 전체를 조회해 시스템 프롬프트에 참고 컨텍스트로 덧붙인다."""
+        conn = metadb.init_db()
+        try:
+            guideline_context = metadb.get_guidelines_context_text(conn)
+        finally:
+            conn.close()
+
+        if not guideline_context:
+            return _SYSTEM_PROMPT
+        return f"{_SYSTEM_PROMPT}\n\n## 업무 담당자 분석 가이드라인 (VDS 쿼리 작성 시 우선 참고)\n{guideline_context}"
+
+    async def run(self, user_query: str, history: list[dict[str, Any]] | None = None) -> str:
+        """
+        사용자 질문을 받아 MCP 툴을 활용한 최종 답변을 반환한다.
+        history를 전달하면 이전 turn의 {role, content} 텍스트 메시지를 대화 맥락으로 이어 붙인다.
+        저장된 분석 가이드라인은 호출 시점마다 새로 조회해 즉시 반영한다.
+        """
+        messages: list[dict[str, Any]] = list(history or [])
+        messages.append({"role": "user", "content": user_query})
+        system_prompt = self._build_system_prompt()
 
         while True:
             response = await self._llm.messages.create(
                 model=_MODEL,
                 max_tokens=4096,
-                system=_SYSTEM_PROMPT,
+                system=system_prompt,
                 tools=self._mcp.tools,
                 messages=messages,
             )

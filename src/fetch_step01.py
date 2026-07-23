@@ -29,7 +29,6 @@ MAX_CONCURRENT = 5
 # ── LLM 비즈니스 글로서리 생성 설정 (Gemini) ──
 GLOSSARY_MODEL       = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 GLOSSARY_CONCURRENT  = 3
-GUIDELINE_PATH       = Path(__file__).parent / "guideline.txt"
 
 GLOSSARY_SYSTEM_PROMPT = """\
 당신은 병원 경영 분석 스키마 전문 비즈니스 분석가입니다.
@@ -241,12 +240,60 @@ async def _fetch_and_save_stats(
     print(f"  [STAT] {name[:50]:<50}  {collected}/{len(fields)}개 필드 완료")
 
 
-def _load_guideline() -> str | None:
-    """업무 담당자가 작성한 구술형 가이드라인 텍스트(src/guideline.txt)가 있으면 로드한다."""
-    if GUIDELINE_PATH.exists():
-        text = GUIDELINE_PATH.read_text(encoding="utf-8").strip()
-        return text or None
-    return None
+def get_gemini_client() -> genai.Client | None:
+    """GEMINI_API_KEY가 설정되어 있으면 Gemini 클라이언트를, 아니면 None을 반환한다."""
+    key = os.environ.get("GEMINI_API_KEY")
+    return genai.Client(api_key=key) if key else None
+
+
+def _field_context(f: dict) -> dict:
+    """필드 row(메타데이터+통계)를 Gemini 프롬프트용 컨텍스트 dict로 변환한다."""
+    return {
+        "field_name":  f["field_caption"],
+        "data_type":   f["data_type"],
+        "role":        f["field_role"],
+        "aggregation": f["default_aggregation"],
+        "stats": {
+            "non_null_count": f["non_null_count"],
+            "distinct_count": f["distinct_count"],
+            "min_value":      f["min_value"],
+            "max_value":      f["max_value"],
+            "mean_value":     f["mean_value"],
+        } if f["non_null_count"] is not None else None,
+    }
+
+
+async def _call_gemini_glossary(
+    client: genai.Client,
+    datasource_name: str,
+    context: list[dict],
+    guideline: str | None,
+) -> list[GlossaryItem]:
+    """필드 컨텍스트를 Gemini에 전달해 구조화된 글로서리 결과를 받는다. 실패 시 빈 리스트."""
+    user_prompt = f"데이터 소스: {datasource_name}\n필드 메타데이터:\n{json.dumps(context, ensure_ascii=False, indent=2)}"
+    if guideline:
+        user_prompt += f"\n\n업무 담당자 가이드라인 (참고):\n{guideline}"
+
+    config = types.GenerateContentConfig(
+        system_instruction=GLOSSARY_SYSTEM_PROMPT,
+        response_mime_type="application/json",
+        response_schema=list[GlossaryItem],
+        max_output_tokens=4096,
+    )
+    response = await client.aio.models.generate_content(
+        model=GLOSSARY_MODEL,
+        contents=user_prompt,
+        config=config,
+    )
+
+    items: list[GlossaryItem] = response.parsed or []
+    if not items:
+        # response_schema 검증 실패 등으로 parsed가 비어있으면 원문 JSON을 직접 파싱 시도
+        try:
+            items = [GlossaryItem.model_validate(i) for i in json.loads(response.text)]
+        except Exception:
+            return []
+    return items
 
 
 async def _generate_datasource_glossary(
@@ -266,53 +313,18 @@ async def _generate_datasource_glossary(
     if not targets:
         return
 
-    context = [
-        {
-            "field_name": f["field_caption"],
-            "data_type":  f["data_type"],
-            "role":       f["field_role"],
-            "aggregation": f["default_aggregation"],
-            "stats": {
-                "non_null_count": f["non_null_count"],
-                "distinct_count": f["distinct_count"],
-                "min_value":      f["min_value"],
-                "max_value":      f["max_value"],
-                "mean_value":     f["mean_value"],
-            } if f["non_null_count"] is not None else None,
-        }
-        for f in targets
-    ]
-
-    user_prompt = f"데이터 소스: {name}\n필드 메타데이터:\n{json.dumps(context, ensure_ascii=False, indent=2)}"
-    if guideline:
-        user_prompt += f"\n\n업무 담당자 가이드라인 (참고):\n{guideline}"
-
-    config = types.GenerateContentConfig(
-        system_instruction=GLOSSARY_SYSTEM_PROMPT,
-        response_mime_type="application/json",
-        response_schema=list[GlossaryItem],
-        max_output_tokens=4096,
-    )
+    context = [_field_context(f) for f in targets]
 
     async with semaphore:
         try:
-            response = await client.aio.models.generate_content(
-                model=GLOSSARY_MODEL,
-                contents=user_prompt,
-                config=config,
-            )
+            items = await _call_gemini_glossary(client, name, context, guideline)
         except Exception as e:
             print(f"    [GLOSS] LLM 호출 오류 ({name[:30]}): {e}")
             return
 
-    items: list[GlossaryItem] = response.parsed or []
     if not items:
-        # response_schema 검증 실패 등으로 parsed가 비어있으면 원문 JSON을 직접 파싱 시도
-        try:
-            items = [GlossaryItem.model_validate(i) for i in json.loads(response.text)]
-        except Exception:
-            print(f"    [GLOSS] 응답 파싱 실패 ({name[:30]})")
-            return
+        print(f"    [GLOSS] 응답 파싱 실패 ({name[:30]})")
+        return
 
     fid_map = {f["field_caption"]: f["id"] for f in targets}
     saved = 0
@@ -330,6 +342,38 @@ async def _generate_datasource_glossary(
             )
             saved += 1
     print(f"  [GLOSS] {name[:50]:<50}  {saved}/{len(targets)}개 필드 완료")
+
+
+async def regenerate_field_glossary(
+    client: genai.Client,
+    db_conn,
+    field_id: int,
+    guideline: str | None = None,
+) -> bool:
+    """
+    단일 필드의 글로서리를 재생성한다 (웹 API 전용).
+    is_confirmed=1로 승인된 필드는 upsert_field_business_glossary에서 덮어쓰지 않으므로
+    호출측에서 승인 여부를 먼저 확인해 불필요한 API 호출을 막는 것을 권장한다.
+    """
+    row = metadb.get_field_for_glossary(db_conn, field_id)
+    if row is None:
+        return False
+
+    context = [_field_context(row)]
+    items = await _call_gemini_glossary(client, row["datasource_name"], context, guideline)
+    if not items:
+        return False
+
+    item = items[0]
+    with db_conn:
+        metadb.upsert_field_business_glossary(
+            db_conn, field_id,
+            field_name=row["field_caption"],
+            logical_name=item.logical_name,
+            description=item.description,
+            analysis_usage=item.analysis_usage,
+        )
+    return True
 
 
 def _write_app_log(db_conn, infra_override: dict | None = None) -> None:
@@ -460,8 +504,8 @@ async def main() -> None:
         print(f"\n[4/4] LLM 비즈니스 글로서리 생성 (Gemini: {GLOSSARY_MODEL})...")
         if os.environ.get("GEMINI_API_KEY"):
             client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-            guideline = _load_guideline()
-            print(f"      가이드라인: {'적용 (' + str(GUIDELINE_PATH.name) + ')' if guideline else '없음'}")
+            guideline = metadb.get_guidelines_context_text(db_conn)
+            print(f"      가이드라인: {'적용 (' + str(len(guideline)) + '자)' if guideline else '없음'}")
             gloss_sem = asyncio.Semaphore(GLOSSARY_CONCURRENT)
             await asyncio.gather(*[
                 _generate_datasource_glossary(client, db_conn, r["luid"], r["name"], gloss_sem, guideline)

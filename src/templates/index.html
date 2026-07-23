@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tableau AI Agent Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script>
+    // FOUC 방지: 저장된 테마 또는 시스템 설정을 최대한 빨리 적용한다.
+    (function () {
+      const saved = localStorage.getItem('theme');
+      const isDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', isDark);
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 text-[13px]">
+  <div class="flex h-full">
+
+    <!-- ── 좌측 사이드바 ── -->
+    <aside class="w-56 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col">
+      <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div>
+          <h1 class="text-[13px] font-semibold tracking-tight">Tableau AI Agent</h1>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400">통합 대시보드</p>
+        </div>
+        <button id="theme-toggle" title="다크/라이트 모드 전환"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs">
+          <span id="theme-icon">🌙</span>
+        </button>
+      </div>
+      <nav class="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
+        <button data-tab="chat" class="nav-btn nav-active w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] text-left hover:bg-slate-100 dark:hover:bg-slate-800">
+          <span class="text-xs">💬</span><span>Agent 대화방</span>
+        </button>
+
+        <div class="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">설정</div>
+
+        <button data-tab="glossary" class="nav-btn w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] text-left hover:bg-slate-100 dark:hover:bg-slate-800">
+          <span class="text-xs">📖</span><span>비즈니스 글로서리 큐레이터</span>
+        </button>
+        <button data-tab="guideline" class="nav-btn w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] text-left hover:bg-slate-100 dark:hover:bg-slate-800">
+          <span class="text-xs">📝</span><span>분석 가이드라인 입력</span>
+        </button>
+
+        <div class="w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] text-left text-slate-400 opacity-60 cursor-not-allowed">
+          <span class="text-xs">➕</span><span>추후 확장 예정</span>
+        </div>
+      </nav>
+      <div class="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-[10px] text-slate-400">
+        STEP 01 파이프라인 · Gemini 글로서리
+      </div>
+    </aside>
+
+    <!-- ── 메인 영역 ── -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Tab 1: Agent 대화 -->
+      <section id="tab-chat" class="tab-panel flex-1 flex flex-col overflow-hidden">
+        <header class="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <div>
+            <h2 class="text-[13px] font-semibold">Agent 대화방</h2>
+            <p class="text-[11px] text-slate-500 dark:text-slate-400">공식 Tableau MCP + ta_mcp(VDS) 기반 자연어 질의응답</p>
+          </div>
+          <div id="chat-status" class="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400"></div>
+        </header>
+
+        <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-2.5">
+          <div class="chat-bubble mr-auto max-w-2xl px-3 py-2 rounded-xl rounded-bl-sm text-[12.5px] leading-relaxed bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            안녕하세요. Tableau 데이터에 대해 궁금한 점을 물어보세요. 예: "지역별 판매 순위 상위 5개 알려줘"
+          </div>
+        </div>
+
+        <form id="chat-form" class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 flex gap-2">
+          <textarea id="chat-input" rows="1" placeholder="질문을 입력하세요... (Shift+Enter: 줄바꿈)"
+            class="flex-1 resize-none rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2 text-[12.5px] focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+          <button type="submit" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-medium px-4 py-2 disabled:opacity-40" id="chat-send-btn">전송</button>
+        </form>
+      </section>
+
+      <!-- Tab 2: 글로서리 큐레이터 -->
+      <section id="tab-glossary" class="tab-panel hidden flex-1 flex flex-col overflow-hidden">
+        <header class="px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <h2 class="text-[13px] font-semibold">비즈니스 글로서리 큐레이터</h2>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">STEP 01에서 Gemini가 생성한 필드 글로서리를 검수·수정·승인합니다.</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="ds-select" class="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-2.5 py-1.5 text-[12px]"></select>
+            <label class="flex items-center gap-1.5 text-[12px]">
+              <input type="checkbox" id="unconfirmed-only" class="rounded">
+              미승인만 보기
+            </label>
+            <input id="glossary-search" type="text" placeholder="필드명/표시명 검색"
+              class="rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-2.5 py-1.5 text-[12px] w-56">
+          </div>
+        </header>
+
+        <div class="flex-1 overflow-auto px-5 py-3">
+          <table class="glossary-table w-full text-left border-collapse">
+            <thead>
+              <tr class="text-[10.5px] uppercase tracking-wide text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                <th class="px-2.5 py-1.5 font-medium">필드</th>
+                <th class="px-2.5 py-1.5 font-medium">표시명</th>
+                <th class="px-2.5 py-1.5 font-medium">설명</th>
+                <th class="px-2.5 py-1.5 font-medium">분석 활용법</th>
+                <th class="px-2.5 py-1.5 font-medium">상태</th>
+                <th class="px-2.5 py-1.5 font-medium">액션</th>
+              </tr>
+            </thead>
+            <tbody id="glossary-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 3: 분석 가이드라인 -->
+      <section id="tab-guideline" class="tab-panel hidden flex-1 flex flex-col overflow-hidden">
+        <header class="px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <h2 class="text-[13px] font-semibold">분석 가이드라인</h2>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400">지표별로 여러 개 저장할 수 있습니다. Agent가 VDS 쿼리를 작성할 때와 STEP 01 글로서리 생성 시 참고 컨텍스트로 즉시 반영됩니다.</p>
+        </header>
+
+        <div class="flex-1 flex overflow-hidden">
+          <!-- 가이드라인 목록 -->
+          <div class="w-56 shrink-0 border-r border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+            <button id="guideline-new-btn" class="m-2.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-medium px-2.5 py-1.5">+ 새 가이드라인</button>
+            <ul id="guideline-list" class="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5"></ul>
+          </div>
+
+          <!-- 편집기 -->
+          <div class="flex-1 overflow-auto px-5 py-4 flex flex-col gap-2.5">
+            <input id="guideline-title" type="text" placeholder="가이드라인 제목 (예: 매출 지표 산정 기준)"
+              class="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-[12.5px] font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <textarea id="guideline-content" rows="16" placeholder="예: 병원별 매출은 부가세를 제외한 순매출 기준으로 해석합니다. 재고 회전율은 물류센터 단위로 비교합니다."
+              class="flex-1 resize-none rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-[12.5px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+            <div class="flex items-center gap-2">
+              <button id="guideline-save" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-medium px-4 py-2">저장</button>
+              <button id="guideline-delete" class="hidden rounded-lg border border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[12px] font-medium px-4 py-2">삭제</button>
+              <span id="guideline-status" class="text-[11px] text-slate-500 dark:text-slate-400"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    const API = '/api';
+
+    // ── 다크/라이트 모드 토글 ──
+    const themeToggleBtn = document.getElementById('theme-toggle');
+    const themeIcon = document.getElementById('theme-icon');
+
+    function applyThemeIcon() {
+      themeIcon.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+    }
+    applyThemeIcon();
+
+    themeToggleBtn.addEventListener('click', () => {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      applyThemeIcon();
+    });
+
+    // ── 탭 전환 ──
+    document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    function switchTab(tab) {
+      document.querySelectorAll('.nav-btn[data-tab]').forEach(b => b.classList.toggle('nav-active', b.dataset.tab === tab));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `tab-${tab}`));
+      if (tab === 'glossary') loadDatasources().then(loadGlossary);
+      if (tab === 'guideline') loadGuidelineList();
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
+
+    // ── Tab 1: Agent 대화 ──
+    let chatHistory = [];
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    const chatMessages = document.getElementById('chat-messages');
+    const chatStatus = document.getElementById('chat-status');
+    const chatSendBtn = document.getElementById('chat-send-btn');
+
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        chatForm.requestSubmit();
+      }
+    });
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = chatInput.value.trim();
+      if (!query) return;
+
+      appendMessage('user', query);
+      const historyBeforeThisTurn = [...chatHistory];
+      chatHistory.push({ role: 'user', content: query });
+      chatInput.value = '';
+      chatSendBtn.disabled = true;
+      setChatStatus('loading');
+
+      try {
+        const res = await fetch(`${API}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, history: historyBeforeThisTurn }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '요청 실패');
+        appendMessage('assistant', data.answer);
+        chatHistory.push({ role: 'assistant', content: data.answer });
+        setChatStatus('done');
+      } catch (err) {
+        appendMessage('assistant', `⚠️ 오류: ${err.message}`);
+        setChatStatus('error');
+      } finally {
+        chatSendBtn.disabled = false;
+      }
+    });
+
+    function appendMessage(role, text) {
+      const bubble = document.createElement('div');
+      const base = 'chat-bubble max-w-2xl px-3 py-2 rounded-xl text-[12.5px] leading-relaxed whitespace-pre-wrap';
+      bubble.className = role === 'user'
+        ? `${base} ml-auto bg-indigo-600 text-white rounded-br-sm`
+        : `${base} mr-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-bl-sm`;
+      bubble.textContent = text;
+      chatMessages.appendChild(bubble);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function setChatStatus(state) {
+      const map = {
+        idle:    ['bg-slate-300 dark:bg-slate-600', '대기 중'],
+        loading: ['bg-amber-400 animate-pulse', 'Agent가 MCP 툴로 데이터를 조회하는 중...'],
+        done:    ['bg-emerald-500', '응답 완료'],
+        error:   ['bg-rose-500', '오류 발생'],
+      };
+      const [dotClass, label] = map[state];
+      chatStatus.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full ${dotClass}"></span><span>${label}</span>`;
+    }
+    setChatStatus('idle');
+
+    // ── Tab 2: 글로서리 큐레이터 ──
+    const dsSelect = document.getElementById('ds-select');
+    const unconfirmedOnly = document.getElementById('unconfirmed-only');
+    const searchInput = document.getElementById('glossary-search');
+    const glossaryBody = document.getElementById('glossary-body');
+
+    async function loadDatasources() {
+      const res = await fetch(`${API}/datasources`);
+      const list = await res.json();
+      dsSelect.innerHTML = '<option value="">전체 데이터소스</option>' +
+        list.map(d => `<option value="${d.luid}">${escapeHtml(d.name)}</option>`).join('');
+    }
+
+    async function loadGlossary() {
+      const params = new URLSearchParams();
+      if (dsSelect.value) params.set('datasource_luid', dsSelect.value);
+      if (unconfirmedOnly.checked) params.set('unconfirmed_only', 'true');
+      if (searchInput.value.trim()) params.set('search', searchInput.value.trim());
+
+      glossaryBody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-[12px] text-slate-400">불러오는 중...</td></tr>`;
+      const res = await fetch(`${API}/glossary?${params}`);
+      const rows = await res.json();
+      renderGlossaryRows(rows);
+    }
+
+    function renderGlossaryRows(rows) {
+      glossaryBody.innerHTML = '';
+      if (!rows.length) {
+        glossaryBody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-[12px] text-slate-400">표시할 필드가 없습니다.</td></tr>`;
+        return;
+      }
+      rows.forEach(r => glossaryBody.appendChild(buildGlossaryRow(r)));
+    }
+
+    function buildGlossaryRow(r) {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-100 dark:border-slate-800 align-top';
+      tr.dataset.fieldId = r.field_id;
+
+      const badgeClass = r.is_confirmed
+        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
+      const badgeText = r.is_confirmed ? '승인됨' : '미승인';
+
+      tr.innerHTML = `
+        <td class="px-2.5 py-2">
+          <div class="font-medium text-[12.5px]">${escapeHtml(r.field_caption)}</div>
+          <div class="text-[11px] text-slate-400">${escapeHtml(r.datasource_name)} · ${escapeHtml(r.data_type)}</div>
+        </td>
+        <td class="px-2.5 py-2">
+          <input class="f-logical w-32 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-500" value="${escapeHtml(r.logical_name || '')}">
+        </td>
+        <td class="px-2.5 py-2">
+          <textarea class="f-desc w-60 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-500" rows="2">${escapeHtml(r.description || '')}</textarea>
+        </td>
+        <td class="px-2.5 py-2">
+          <textarea class="f-usage w-60 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-500" rows="2">${escapeHtml(r.analysis_usage || '')}</textarea>
+        </td>
+        <td class="px-2.5 py-2">
+          <span class="inline-block px-1.5 py-0.5 rounded-full text-[10.5px] font-medium ${badgeClass}">${badgeText}</span>
+        </td>
+        <td class="px-2.5 py-2 space-y-1 w-20">
+          <button class="btn-save w-full rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] px-2 py-1 whitespace-nowrap">승인/저장</button>
+          <button title="Gemini로 재생성" class="btn-regen w-full rounded-md border border-slate-300 dark:border-slate-600 text-[11px] px-2 py-1 whitespace-nowrap hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed" ${r.is_confirmed ? 'disabled' : ''}>재생성</button>
+        </td>
+      `;
+
+      tr.querySelector('.btn-save').addEventListener('click', () => saveGlossary(tr));
+      tr.querySelector('.btn-regen').addEventListener('click', () => regenerateGlossary(tr));
+      return tr;
+    }
+
+    async function saveGlossary(tr) {
+      const fieldId = tr.dataset.fieldId;
+      const body = {
+        logical_name: tr.querySelector('.f-logical').value,
+        description: tr.querySelector('.f-desc').value,
+        analysis_usage: tr.querySelector('.f-usage').value,
+      };
+      const btn = tr.querySelector('.btn-save');
+      btn.disabled = true; btn.textContent = '저장 중...';
+      try {
+        const res = await fetch(`${API}/glossary/${fieldId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '저장 실패');
+        tr.replaceWith(buildGlossaryRow(data));
+      } catch (err) {
+        alert(`저장 실패: ${err.message}`);
+        btn.disabled = false; btn.textContent = '승인/저장';
+      }
+    }
+
+    async function regenerateGlossary(tr) {
+      const fieldId = tr.dataset.fieldId;
+      const btn = tr.querySelector('.btn-regen');
+      btn.disabled = true; btn.textContent = '생성 중...';
+      try {
+        const res = await fetch(`${API}/glossary/${fieldId}/regenerate`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '재생성 실패');
+        tr.replaceWith(buildGlossaryRow(data));
+      } catch (err) {
+        alert(`재생성 실패: ${err.message}`);
+        btn.disabled = false; btn.textContent = '재생성';
+      }
+    }
+
+    [dsSelect, unconfirmedOnly].forEach(el => el.addEventListener('change', loadGlossary));
+    let searchTimer;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadGlossary, 300);
+    });
+
+    // ── Tab 3: 분석 가이드라인 (제목별 여러 건) ──
+    const guidelineListEl = document.getElementById('guideline-list');
+    const guidelineNewBtn = document.getElementById('guideline-new-btn');
+    const guidelineTitleInput = document.getElementById('guideline-title');
+    const guidelineContentText = document.getElementById('guideline-content');
+    const guidelineSaveBtn = document.getElementById('guideline-save');
+    const guidelineDeleteBtn = document.getElementById('guideline-delete');
+    const guidelineStatus = document.getElementById('guideline-status');
+
+    let guidelines = [];
+    let currentGuidelineId = null; // null = 신규 작성 중
+
+    async function loadGuidelineList() {
+      const res = await fetch(`${API}/guidelines`);
+      guidelines = await res.json();
+      if (currentGuidelineId !== null && !guidelines.some(g => g.id === currentGuidelineId)) {
+        currentGuidelineId = null;
+      }
+      if (currentGuidelineId === null && guidelines.length) {
+        selectGuideline(guidelines[0].id);
+      } else {
+        renderGuidelineList();
+      }
+    }
+
+    function renderGuidelineList() {
+      if (!guidelines.length) {
+        guidelineListEl.innerHTML = `<li class="px-2.5 py-5 text-center text-[11px] text-slate-400">저장된 가이드라인이 없습니다.</li>`;
+        return;
+      }
+      guidelineListEl.innerHTML = guidelines.map(g => {
+        const active = g.id === currentGuidelineId;
+        return `
+          <li>
+            <button data-id="${g.id}" class="guideline-item w-full text-left px-2.5 py-1.5 rounded-md text-[12px] truncate ${
+              active
+                ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-medium'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+            }">${escapeHtml(g.title)}</button>
+          </li>
+        `;
+      }).join('');
+      guidelineListEl.querySelectorAll('.guideline-item').forEach(btn => {
+        btn.addEventListener('click', () => selectGuideline(Number(btn.dataset.id)));
+      });
+    }
+
+    function selectGuideline(id) {
+      currentGuidelineId = id;
+      const g = guidelines.find(x => x.id === id);
+      guidelineTitleInput.value = g ? g.title : '';
+      guidelineContentText.value = g ? g.content : '';
+      guidelineStatus.textContent = '';
+      guidelineDeleteBtn.classList.toggle('hidden', !g);
+      renderGuidelineList();
+    }
+
+    guidelineNewBtn.addEventListener('click', () => {
+      currentGuidelineId = null;
+      guidelineTitleInput.value = '';
+      guidelineContentText.value = '';
+      guidelineStatus.textContent = '';
+      guidelineDeleteBtn.classList.add('hidden');
+      renderGuidelineList();
+      guidelineTitleInput.focus();
+    });
+
+    guidelineSaveBtn.addEventListener('click', async () => {
+      const title = guidelineTitleInput.value.trim();
+      if (!title) {
+        guidelineStatus.textContent = '제목을 입력하세요.';
+        return;
+      }
+      const body = { title, content: guidelineContentText.value };
+      guidelineSaveBtn.disabled = true;
+      guidelineSaveBtn.textContent = '저장 중...';
+      try {
+        const url = currentGuidelineId === null ? `${API}/guidelines` : `${API}/guidelines/${currentGuidelineId}`;
+        const method = currentGuidelineId === null ? 'POST' : 'PUT';
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '저장 실패');
+        currentGuidelineId = data.id;
+        await loadGuidelineList();
+        selectGuideline(currentGuidelineId);
+        guidelineStatus.textContent = `저장 완료 (${new Date().toLocaleTimeString('ko-KR')})`;
+      } catch (err) {
+        guidelineStatus.textContent = `저장 실패: ${err.message}`;
+      } finally {
+        guidelineSaveBtn.disabled = false;
+        guidelineSaveBtn.textContent = '저장';
+      }
+    });
+
+    guidelineDeleteBtn.addEventListener('click', async () => {
+      if (currentGuidelineId === null) return;
+      if (!confirm('이 가이드라인을 삭제할까요?')) return;
+      await fetch(`${API}/guidelines/${currentGuidelineId}`, { method: 'DELETE' });
+      currentGuidelineId = null;
+      await loadGuidelineList();
+    });
+  </script>
+</body>
+</html>

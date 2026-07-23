@@ -24,6 +24,7 @@ Tableau 환경에서 LLM 기반 데이터 조회는 두 가지 핵심 문제를 
 | MCP 프로토콜 | `mcp` Python SDK | 다중 서버 세션 관리 |
 | Tableau 메타데이터 | 공식 Tableau MCP 서버 | 워크북·대시보드·사용자 정보 |
 | Tableau 데이터 쿼리 | VizQL Data Service (VDS) API | 실측 수치·지표 집계 |
+| 웹 대시보드 | FastAPI + uvicorn + Jinja2 | Agent 대화 / 글로서리 큐레이터 / 분석 가이드라인 통합 UI |
 | HTTP 클라이언트 | `httpx` (async) | VDS REST 통신 |
 | 런타임 | Python 3.14, `uv` | 의존성 관리 및 실행 |
 | 환경 변수 | `python-dotenv` | 인증 정보 분리 |
@@ -39,9 +40,13 @@ Tableau 환경에서 LLM 기반 데이터 조회는 두 가지 핵심 문제를 
 │   ├── tableau_mcp.py        # ta_mcp FastMCP 서버 (VDS 툴: list_vds_sources, query_vds_data)
 │   ├── main_agent.py         # 메인 에이전트 진입점 (MultiMCPClient + TableauAgent)
 │   ├── fetch_step01.py       # STEP 01: 데이터 소스·필드 메타데이터·통계 수집 + Gemini 비즈니스 글로서리 자동 생성
-│   ├── db.py                 # SQLite 저장소 (datasources/fields/kpis/glossary/field_business_glossary/stats 스키마 + snapshot 빌더)
+│   ├── db.py                 # SQLite 저장소 (datasources/fields/kpis/glossary/field_business_glossary/guidelines/stats 스키마 + snapshot 빌더)
 │   ├── health_check.py       # 인프라 헬스 체크 (VDS API, ta_mcp, 공식 MCP) + app_log.json 생성/서빙
-│   └── monitor.html          # STEP 01~05 파이프라인 모니터링 대시보드 (app_log.json 기반 정적 페이지)
+│   ├── monitor.html          # STEP 01~05 파이프라인 모니터링 대시보드 (app_log.json 기반 정적 페이지, 읽기 전용)
+│   ├── web_app.py            # 통합 웹 대시보드 FastAPI 진입점 (Chat/글로서리 큐레이터/가이드라인 편집)
+│   ├── routers/               # web_app 라우터 모듈 (chat.py, glossary.py, guideline.py)
+│   ├── templates/index.html  # 통합 대시보드 SPA (Tailwind CDN, 좌측 사이드바 3탭)
+│   └── static/style.css      # 대시보드 보강 스타일
 ├── docs/
 │   ├── architecture_plan.md  # 아키텍처 설계 및 단계별 로드맵
 │   └── user_scenarios.md     # 엔드투엔드 유저 시나리오 명세
@@ -103,6 +108,10 @@ uv run python src/fetch_step01.py
 # 인프라 헬스 체크 (VDS API / ta_mcp / 공식 MCP), 대시보드 서빙까지 한번에
 uv run python src/health_check.py --serve
 # → http://localhost:8000/monitor.html 에서 파이프라인 모니터링
+
+# 통합 웹 대시보드 (Chat / 글로서리 큐레이터 / 가이드라인 편집)
+uv run uvicorn src.web_app:app --reload
+# → http://127.0.0.1:8000
 ```
 
 ---
@@ -131,13 +140,33 @@ python -m http.server 8000
 - **페르소나**: "병원 경영 분석 스키마 전문 비즈니스 분석가" 시스템 인스트럭션 + VDS 필드 통계(최소/최대/평균 등) 컨텍스트 결합
 - **구조화된 출력**: `google-genai` SDK의 `response_schema`(Pydantic `GlossaryItem`)로 JSON 형식을 강제해 파싱 실패를 방지
 - **토큰 최적화**: 이미 생성된(또는 `is_confirmed=1`로 승인된) 필드는 재호출하지 않고 스킵 — 배치·오프라인 1회성 생성
-- **가이드라인 주입**: `src/guideline.txt`가 존재하면 업무 담당자 구술형 가이드라인을 프롬프트에 함께 전달
+- **가이드라인 주입**: `guidelines` 테이블(제목+본문, 여러 건 저장 가능)에 저장된 전체 가이드라인을 `get_guidelines_context_text()`로 합쳐 프롬프트에 함께 전달
 - **안전한 스킵**: `GEMINI_API_KEY` 미설정 시 이 단계만 건너뛰고 나머지 STEP 01 파이프라인(수집·통계)은 정상 진행
 
 ```powershell
 # .env 에 GEMINI_API_KEY 설정 후
 uv run python src/fetch_step01.py
 ```
+
+---
+
+## Web Dashboard
+
+`monitor.html`(읽기 전용 모니터링)과 별개로, 실사용자가 직접 조작하는 통합 웹 대시보드를 FastAPI로 제공한다.
+
+```powershell
+uv add fastapi "uvicorn[standard]" jinja2   # 최초 1회
+uv run uvicorn src.web_app:app --reload
+# → http://127.0.0.1:8000
+```
+
+| 탭 | 기능 |
+|---|---|
+| 💬 Agent 대화방 | `main_agent.py`의 `TableauAgent`를 앱 기동 시 1회 연결해 재사용. 자연어 질문 → 공식 MCP/ta_mcp 툴 라우팅 → 답변. 멀티턴 히스토리 지원 |
+| 📖 비즈니스 글로서리 큐레이터 | STEP 01이 생성한 필드 글로서리를 데이터소스별로 조회, 인라인 수정 후 승인(`is_confirmed=1`), 미승인 필드는 Gemini로 개별 재생성 가능 |
+| 📝 분석 가이드라인 | 지표별로 제목을 가진 가이드라인을 여러 건 저장. 저장 즉시 Agent 대화(VDS 쿼리 작성)와 STEP 01 글로서리 생성 양쪽의 LLM 프롬프트에 반영 |
+
+라우터는 `src/routers/{chat,glossary,guideline}.py`로 모듈화되어 있으며, `src/web_app.py`의 FastAPI `lifespan`에서 MCP 연결 실패 시에도 글로서리·가이드라인 탭은 정상 동작하도록 격리되어 있다. UI는 `src/templates/index.html` 단일 SPA(Tailwind CDN, 다크/라이트 토글)로 구성된다.
 
 ---
 
